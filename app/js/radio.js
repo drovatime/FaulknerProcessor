@@ -1,17 +1,25 @@
-// The cabin radio: two original 8-bit stations, synthesized live with Web Audio.
-//   Fog Line       — slow, misty, dreamy: sustained pads, echoing arpeggios, a lonely melody.
-//   Harbor Lights  — late-night jazz trio: walking bass, brushes and ride, soft chord comping, vibes.
+// The cabin radio: original 8-bit stations, synthesized live with Web Audio.
+//   Fog Line          — slow, misty, dreamy: sustained pads, echoing arpeggios, a lonely melody.
+//   Low Tide          — ambient pads and chimes over gentle surf.
+//   Rain on the Sound — lo-fi keys, a lazy beat, rain and vinyl crackle.
+//   Harbor Lights     — late-night jazz trio: walking bass, brushes and ride, soft comping, vibes.
+//   Cedar Waltz       — a gentle jazz waltz in three.
+//   Last Call         — noir: muted trumpet, slow two-feel bass, swirling brushes, rain on the window.
 // The music is generated from chord progressions with gentle randomness, so it never
 // repeats exactly but always settles back into the same mood.
 
-let ctx = null, mix, out, send, waves = {}, noiseBuf = null;
+let ctx = null, mix, out, send, warm, waves = {}, noiseBuf = null, beds = [];
 let timer = null, nextTime = 0, step = 0, current = null;
 let volume = 0.5;
 const listeners = new Set();
 
 export const STATIONS = {
   fog: { name: 'Fog Line', blurb: 'Slow, misty synth for long nights' },
+  tide: { name: 'Low Tide', blurb: 'Ambient pads and chimes over gentle surf' },
+  rain: { name: 'Rain on the Sound', blurb: 'Lo-fi keys, a lazy beat, rain on the glass' },
   harbor: { name: 'Harbor Lights', blurb: 'Walking bass, brushes and vibes' },
+  waltz: { name: 'Cedar Waltz', blurb: 'A gentle jazz waltz in three' },
+  noir: { name: 'Last Call', blurb: 'Muted trumpet and brushes, a wet street at 2 a.m.' },
 };
 
 const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
@@ -43,7 +51,7 @@ function setup(given) {
   try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* older Safari */ }
   out = ctx.createGain();
   out.gain.value = volume;
-  const warm = ctx.createBiquadFilter();
+  warm = ctx.createBiquadFilter();
   warm.type = 'lowpass';
   warm.frequency.value = 3400;
   mix = ctx.createGain();
@@ -70,10 +78,15 @@ function setup(given) {
   for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
 }
 
-function tone(t, midi, dur, { wave = 'triangle', gain = 0.1, attack = 0.01, release = 0.12, echo = 0, vibrato = 0, cutoff = 0 } = {}) {
+function tone(t, midi, dur, { wave = 'triangle', gain = 0.1, attack = 0.01, release = 0.12, echo = 0, vibrato = 0, cutoff = 0, bend = 0, detune = 0 } = {}) {
   const o = ctx.createOscillator();
   if (waves[wave]) o.setPeriodicWave(waves[wave]); else o.type = wave;
   o.frequency.setValueAtTime(midiHz(midi), t);
+  if (detune) o.detune.value = detune;
+  if (bend) { // a fall-off at the end of the note, like a horn player letting it go
+    o.frequency.setValueAtTime(midiHz(midi), t + dur * 0.6);
+    o.frequency.exponentialRampToValueAtTime(midiHz(midi + bend), t + dur + 0.05);
+  }
   if (vibrato) {
     const lfo = ctx.createOscillator();
     const lg = ctx.createGain();
@@ -258,7 +271,269 @@ const HARBOR = {
   },
 };
 
-const PROGRAMS = { fog: FOG, harbor: HARBOR };
+// ------------------------------------------------------------------ ambience beds
+// A looping noise layer: surf (slow swells), rain, or room tone.
+function bed(t, { lp = 800, hp = 60, gain = 0.04, swell = 0, swellDepth = 0.6 }) {
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuf;
+  src.loop = true;
+  const h = ctx.createBiquadFilter(); h.type = 'highpass'; h.frequency.value = hp;
+  const l = ctx.createBiquadFilter(); l.type = 'lowpass'; l.frequency.value = lp;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(gain, t + 2);
+  src.connect(h).connect(l).connect(g).connect(mix);
+  const nodes = [src];
+  if (swell) {
+    const lfo = ctx.createOscillator();
+    const depth = ctx.createGain();
+    lfo.frequency.value = swell;
+    depth.gain.value = gain * swellDepth;
+    lfo.connect(depth).connect(g.gain);
+    lfo.start(t);
+    nodes.push(lfo);
+  }
+  src.start(t, Math.random());
+  return nodes;
+}
+function crackle(t, span, density) {
+  for (let i = 0; i < density; i++) {
+    const at = t + Math.random() * span;
+    hiss(at, 0.004 + Math.random() * 0.01, { type: 'bandpass', freq: 1500 + Math.random() * 4000, q: 1, gain: 0.01 + Math.random() * 0.035, attack: 0.0005 });
+  }
+}
+const near = (m, prev, lo, hi) => { let x = m; while (x - prev > 6) x -= 12; while (prev - x > 6) x += 12; while (x < lo) x += 12; while (x > hi) x -= 12; return x; };
+
+// ------------------------------------------------------------------ Low Tide
+// D dorian, very slow. Long pads, sparse chimes, and the surf breathing underneath.
+const TIDE = {
+  bpm: 50, perBeat: 2, perBar: 8, echoTime: 0.9, echoFb: 0.5, level: 1.5, cutoff: 2600,
+  chords: [
+    { root: 38, tones: [50, 53, 57, 60, 64] }, // Dm9
+    { root: 38, tones: [50, 53, 57, 62, 65] }, // Dm(add11)
+    { root: 46, tones: [50, 53, 57, 60, 62] }, // Bbmaj9
+    { root: 46, tones: [50, 53, 57, 58, 62] }, // Bbmaj7
+    { root: 36, tones: [48, 53, 57, 60, 64] }, // F/C
+    { root: 43, tones: [46, 50, 53, 57, 58] }, // Gm9
+    { root: 45, tones: [48, 52, 55, 57, 60] }, // Am7
+    { root: 45, tones: [49, 52, 55, 57, 64] }, // A7sus → A
+  ],
+  chime: [62, 65, 67, 69, 72, 74, 77, 79, 81],
+  bed(t) { return bed(t, { lp: 650, hp: 80, gain: 0.09, swell: 0.11, swellDepth: 0.8 }); },
+  play(n, t, sd) {
+    const bar = Math.floor(n / this.perBar), pos = n % this.perBar;
+    const ch = this.chords[bar % this.chords.length];
+    const r = rng(bar * 389 + pos * 13 + Math.floor(bar / 16) * 7);
+    const barDur = sd * this.perBar;
+    if (pos === 0) {
+      ch.tones.forEach((m, i) => {
+        tone(t, m, barDur * 1.05, { wave: 'triangle', gain: 0.022, attack: 2.2, release: 2.5, echo: 0.35, detune: i % 2 ? 6 : -6 });
+        if (i < 3) tone(t, m + 12, barDur, { wave: 'sine', gain: 0.012, attack: 2.8, release: 2.5 });
+      });
+      tone(t, ch.root, barDur * 0.95, { wave: 'sine', gain: 0.13, attack: 0.6, release: 1.5 });
+    }
+    if (r() < 0.28) {
+      const m = this.chime[Math.floor(r() * this.chime.length)];
+      tone(t + r() * sd * 0.3, m, sd * 0.4, { wave: 'sine', gain: 0.03, attack: 0.002, release: 2.2, echo: 0.65 });
+      tone(t, m + 24, sd * 0.1, { wave: 'sine', gain: 0.004, attack: 0.001, release: 0.6 });
+    }
+  },
+};
+
+// ------------------------------------------------------------------ Rain on the Sound
+// Lo-fi: E-flat, 16th-note grid with a lazy swing. Warm keys, a soft beat, rain and crackle.
+const RAIN = {
+  bpm: 76, perBeat: 4, perBar: 16, echoTime: 0.59, echoFb: 0.28, level: 1.2, cutoff: 2300,
+  chords: [
+    { root: 44, tones: [55, 58, 60, 63, 67] }, // Abmaj9
+    { root: 43, tones: [53, 58, 62, 65] },     // Gm7
+    { root: 41, tones: [51, 55, 56, 60, 63] }, // Fm9
+    { root: 46, tones: [51, 55, 56, 60, 62] }, // Bb13sus
+  ],
+  pent: [63, 65, 67, 70, 72, 75, 77, 79],
+  bed(t) { return bed(t, { lp: 5200, hp: 1400, gain: 0.018 }); },
+  play(n, tIn, sd) {
+    const t = n % 2 ? tIn + sd * 0.22 : tIn; // lazy swing on the off-16ths
+    const bar = Math.floor(n / this.perBar), pos = n % this.perBar;
+    const ch = this.chords[bar % this.chords.length];
+    const r = rng(bar * 211 + pos * 17 + Math.floor(bar / 16) * 5);
+    const st = this.st;
+    if (pos === 0) crackle(t, sd * this.perBar, 10);
+    // keys: a warm electric-piano chord on 1 and the "and" of 3
+    if (pos === 0 || pos === 10 || (pos === 14 && r() < 0.3)) {
+      const len = pos === 0 ? sd * 9 : sd * 5;
+      ch.tones.forEach(m => {
+        tone(t + r() * 0.012, m, len, { wave: 'sine', gain: 0.034, attack: 0.006, release: 0.9, vibrato: 1.5 });
+        tone(t, m, len * 0.4, { wave: 'p50', gain: 0.006, attack: 0.004, release: 0.3, cutoff: 1100 });
+      });
+    }
+    // bass
+    if (pos === 0) tone(t, ch.root - 12 + 12, sd * 6, { wave: 'sine', gain: 0.2, attack: 0.01, release: 0.25 });
+    if (pos === 10) tone(t, ch.root - 12 + (r() < 0.5 ? 19 : 12), sd * 4, { wave: 'sine', gain: 0.16, attack: 0.01, release: 0.2 });
+    // drums
+    if (pos === 0 || pos === 10 || (pos === 7 && r() < 0.4)) thump(t, { freq: 52, gain: 0.16, dur: 0.3 });
+    if (pos === 4 || pos === 12) {
+      hiss(t, 0.16, { type: 'bandpass', freq: 1900, q: 0.8, gain: 0.06 });
+      thump(t, { freq: 190, gain: 0.04, dur: 0.08 });
+    }
+    if (pos % 2 === 0) hiss(t, pos % 4 === 2 ? 0.07 : 0.04, { freq: 7500, gain: pos % 4 === 2 ? 0.022 : 0.013 });
+    // a sparse melody that wanders
+    if (pos === 0 && bar % 2 === 1) { st.phrase = r() < 0.7; }
+    if (st.phrase && pos % 2 === 0 && r() < 0.32) {
+      st.line = st.line || 70;
+      const cands = this.pent.filter(m => Math.abs(m - st.line) <= 5);
+      const m = cands[Math.floor(r() * cands.length)] || st.line;
+      st.line = m;
+      tone(t, m, sd * (r() < 0.3 ? 4 : 1.6), { wave: 'triangle', gain: 0.04, attack: 0.01, release: 0.5, echo: 0.4, vibrato: 3 });
+    }
+  },
+};
+
+// ------------------------------------------------------------------ Cedar Waltz
+// F major jazz waltz, 3/4, swung triplet grid. Bass on one, chords on two and three.
+const WALTZ = {
+  bpm: 138, perBeat: 3, perBar: 9, echoTime: 0.33, echoFb: 0.2, level: 1.1, cutoff: 3200,
+  form: [
+    { root: 41, tones: [57, 60, 64, 65] }, // Fmaj7
+    { root: 38, tones: [57, 60, 62, 65] }, // Dm7
+    { root: 43, tones: [58, 62, 65, 67] }, // Gm7
+    { root: 36, tones: [58, 60, 64, 67] }, // C7
+    { root: 45, tones: [55, 60, 64, 67] }, // Am7
+    { root: 38, tones: [57, 60, 62, 66] }, // D7
+    { root: 43, tones: [58, 62, 65, 67] }, // Gm7
+    { root: 36, tones: [58, 60, 64, 67] }, // C7
+    { root: 46, tones: [57, 58, 62, 65] }, // Bbmaj7
+    { root: 46, tones: [55, 58, 61, 62] }, // Bbm6
+    { root: 45, tones: [55, 60, 64, 67] }, // Am7
+    { root: 38, tones: [57, 60, 63, 66] }, // D7b9
+    { root: 43, tones: [58, 62, 65, 67] }, // Gm7
+    { root: 36, tones: [58, 60, 64, 67] }, // C7
+    { root: 41, tones: [57, 60, 64, 65] }, // Fmaj7
+    { root: 36, tones: [58, 60, 64, 67] }, // C7
+  ],
+  scale: [65, 67, 69, 70, 72, 74, 76, 77, 79, 81],
+  play(n, t, sd) {
+    const bar = Math.floor(n / this.perBar), pos = n % this.perBar;
+    const beat = Math.floor(pos / 3), sub = pos % 3;
+    const ch = this.form[bar % this.form.length];
+    const next = this.form[(bar + 1) % this.form.length];
+    const r = rng(bar * 173 + pos * 11 + Math.floor(bar / 32) * 3);
+    const st = this.st;
+    st.bass = st.bass || 41;
+    // bass: one on each bar, walking through every other bar
+    if (sub === 0) {
+      const walk = bar % 2 === 1;
+      let m = null;
+      if (beat === 0) m = ch.root;
+      else if (walk && beat === 1) m = ch.tones[0] - 12;
+      else if (walk && beat === 2) m = next.root + (r() < 0.5 ? 1 : -1);
+      else if (!walk && beat === 2 && r() < 0.6) m = ch.root + 7;
+      if (m !== null) {
+        m = near(m, st.bass, 33, 50);
+        st.bass = m;
+        tone(t, m, sd * (beat === 0 && !walk ? 5 : 2.6), { wave: 'triangle', gain: 0.24, attack: 0.006, release: 0.08 });
+      }
+    }
+    // brushes and ride
+    if (sub === 0) hiss(t, beat === 0 ? 0.3 : 0.12, { type: 'bandpass', freq: beat === 0 ? 2600 : 5200, q: 0.7, gain: beat === 0 ? 0.03 : 0.02, attack: beat === 0 ? 0.05 : 0.003 });
+    if (sub === 0) hiss(t, 0.22, { freq: 8200, gain: beat === 0 ? 0.03 : 0.018 });
+    if (sub === 2 && beat === 1) hiss(t, 0.1, { freq: 8500, gain: 0.014 });
+    if (pos === 0) thump(t, { gain: 0.05 });
+    // comping: oom-pah-pah
+    if (sub === 0 && beat > 0 && r() < 0.85) {
+      ch.tones.forEach(m => tone(t, m, sd * 1.6, { wave: 'p25', gain: 0.013, attack: 0.006, release: 0.14, cutoff: 1700 }));
+    }
+    // melody: vibes for eight bars, a breathy flute for the next eight
+    if (pos === 0 && bar % 4 === 0) st.phrase = r() < 0.75;
+    const flute = Math.floor(bar / 8) % 2 === 1;
+    if (st.phrase && (sub === 0 || (sub === 2 && r() < 0.4)) && r() < 0.5) {
+      st.line = st.line || 72;
+      const pool = r() < 0.6 ? ch.tones.map(m => m + 12) : this.scale;
+      const cands = pool.filter(m => Math.abs(m - st.line) <= 5 && m >= 64 && m <= 84);
+      const m = cands[Math.floor(r() * cands.length)] || st.line;
+      st.line = m;
+      if (flute) tone(t, m, sd * 2.4, { wave: 'triangle', gain: 0.045, attack: 0.05, release: 0.25, vibrato: 4, echo: 0.2 });
+      else tone(t, m, sd * 1.4, { wave: 'sine', gain: 0.05, attack: 0.003, release: 0.7, vibrato: 2.5, echo: 0.2 });
+    }
+  },
+};
+
+// ------------------------------------------------------------------ Last Call
+// Noir. C minor, slow swung triplets. Two-feel upright bass, swirling brushes,
+// low piano voicings, a muted trumpet that lets its notes fall away. Rain on the window.
+const NOIR = {
+  bpm: 58, perBeat: 3, perBar: 12, echoTime: 0.52, echoFb: 0.32, level: 0.92, cutoff: 2500,
+  form: [
+    { root: 36, tones: [51, 55, 59, 62] }, // Cm(maj7)
+    { root: 36, tones: [51, 55, 58, 62] }, // Cm7
+    { root: 41, tones: [56, 60, 63, 67] }, // Fm9
+    { root: 41, tones: [56, 60, 62, 65] }, // Fm6
+    { root: 38, tones: [50, 53, 56, 60] }, // Dm7b5
+    { root: 43, tones: [53, 56, 59, 62] }, // G7b9
+    { root: 36, tones: [51, 55, 57, 60] }, // Cm6
+    { root: 44, tones: [51, 54, 56, 60] }, // Ab7
+  ],
+  blues: [60, 63, 65, 66, 67, 70, 72, 75, 77],
+  bed(t) { return bed(t, { lp: 3800, hp: 900, gain: 0.02, swell: 0.05, swellDepth: 0.3 }); },
+  play(n, t, sd) {
+    const bar = Math.floor(n / this.perBar), pos = n % this.perBar;
+    const beat = Math.floor(pos / 3), sub = pos % 3;
+    const ch = this.form[bar % this.form.length];
+    const next = this.form[(bar + 1) % this.form.length];
+    const r = rng(bar * 97 + pos * 23 + Math.floor(bar / 16) * 11);
+    const st = this.st;
+    st.bass = st.bass || 36;
+    // upright bass: two-feel, walking into the turnaround
+    if (sub === 0) {
+      const walk = bar % 4 === 3;
+      let m = null;
+      if (beat === 0) m = ch.root;
+      else if (beat === 2 && !walk) m = ch.root + 7;
+      else if (walk) m = beat === 3 ? next.root + 1 : ch.tones[beat % ch.tones.length] - 24;
+      if (m !== null) {
+        m = near(m, st.bass, 31, 48);
+        st.bass = m;
+        tone(t, m, sd * (walk ? 2.6 : 5.2), { wave: 'triangle', gain: 0.27, attack: 0.008, release: 0.12 });
+      }
+    }
+    // brushes: a slow swirl on every beat, soft ride, a rim click now and then
+    if (sub === 0) hiss(t, sd * 2.6, { type: 'bandpass', freq: 2200, q: 0.5, gain: 0.018, attack: sd * 1.2 });
+    if (sub === 0 && (beat === 1 || beat === 3)) hiss(t, 0.3, { freq: 8000, gain: 0.02 });
+    if (sub === 2 && (beat === 1 || beat === 3)) hiss(t, 0.14, { freq: 8500, gain: 0.011 });
+    if (pos === 9 && r() < 0.35) { hiss(t, 0.03, { type: 'bandpass', freq: 1300, q: 3, gain: 0.05 }); thump(t, { freq: 420, gain: 0.02, dur: 0.04 }); }
+    // piano: dark, low, sustained voicings
+    if (pos === 0 || (pos === 8 && r() < 0.35)) {
+      ch.tones.forEach((m, i) => tone(t + i * 0.012, m - (i === 0 ? 12 : 0), sd * 8, { wave: 'sine', gain: 0.03, attack: 0.004, release: 1.4 }));
+    }
+    // muted trumpet
+    if (pos === 0 && bar % 2 === 0) st.phrase = r() < 0.6;
+    if (st.phrase && (sub === 0 || sub === 2) && r() < 0.3) {
+      st.line = st.line || 67;
+      const pool = r() < 0.55 ? ch.tones.map(m => m + 12) : this.blues;
+      const cands = pool.filter(m => Math.abs(m - st.line) <= 5 && m >= 58 && m <= 77);
+      const m = cands[Math.floor(r() * cands.length)] || st.line;
+      st.line = m;
+      const long = r() < 0.35;
+      tone(t, m, sd * (long ? 5 : 1.8), { wave: 'sawtooth', gain: 0.045, attack: 0.07, release: 0.35, vibrato: long ? 5 : 2, cutoff: 1250, echo: 0.3, bend: long && r() < 0.5 ? -3 : 0 });
+    }
+  },
+};
+
+const PROGRAMS = { fog: FOG, tide: TIDE, rain: RAIN, harbor: HARBOR, waltz: WALTZ, noir: NOIR };
+
+function startStation(prog, t) {
+  stopBeds(t);
+  warm.frequency.setValueAtTime(prog.cutoff || 3400, t);
+  send._delay.delayTime.value = prog.echoTime;
+  send._fb.gain.value = prog.echoFb;
+  prog.last = undefined; prog.comp = undefined; prog.line = undefined; prog.phrase = undefined;
+  prog.st = {};
+  if (prog.bed) beds = prog.bed(t) || [];
+}
+function stopBeds(at) {
+  for (const n of beds) { try { n.stop(at); } catch { /* already stopped */ } }
+  beds = [];
+}
 
 function schedule() {
   const prog = PROGRAMS[current];
@@ -278,15 +553,13 @@ export function play(station) {
   setup();
   if (ctx.state === 'suspended') ctx.resume();
   const prog = PROGRAMS[station];
-  send._delay.delayTime.value = prog.echoTime;
-  send._fb.gain.value = prog.echoFb;
+  startStation(prog, ctx.currentTime);
   // fade in
   out.gain.cancelScheduledValues(ctx.currentTime);
   out.gain.setValueAtTime(0.0001, ctx.currentTime);
   out.gain.linearRampToValueAtTime(volume * prog.level, ctx.currentTime + 1.5);
   current = station;
   step = 0;
-  prog.last = undefined; prog.comp = undefined; prog.line = undefined;
   nextTime = ctx.currentTime + 0.1;
   clearInterval(timer);
   timer = setInterval(schedule, 40);
@@ -304,6 +577,7 @@ export function stop() {
     out.gain.cancelScheduledValues(now);
     out.gain.setValueAtTime(out.gain.value, now);
     out.gain.linearRampToValueAtTime(0.0001, now + 0.6);
+    stopBeds(now + 0.7);
   }
   emit();
 }
@@ -324,14 +598,15 @@ export async function renderOffline(station, seconds = 20) {
   const off = new OfflineAudioContext(1, Math.ceil(44100 * seconds), 44100);
   setup(off);
   const prog = PROGRAMS[station];
-  send._delay.delayTime.value = prog.echoTime;
-  send._fb.gain.value = prog.echoFb;
+  const liveBeds = beds;
+  beds = [];
+  startStation(prog, 0.05);
   out.gain.value = 1;
   const sd = 60 / prog.bpm / prog.perBeat;
-  prog.last = undefined; prog.comp = undefined; prog.line = undefined;
   for (let n = 0, t = 0.05; t < seconds - 0.5; n++, t += sd) prog.play(n, t, sd);
   const buf = await off.startRendering();
   ctx = prev;
+  beds = liveBeds;
   if (prev) setup(prev);
   return buf.getChannelData(0);
 }

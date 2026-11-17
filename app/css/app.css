@@ -657,7 +657,8 @@ dialog summary { cursor: pointer; font-weight: 600; }
 
 /* Cabin radio */
 #btn-radio.on { color: #f2c66d; }
-.radio-panel { width: 270px; padding: 6px; }
+.radio-panel { width: 270px; padding: 6px; max-height: calc(100dvh - var(--safe-top) - 70px); }
+.radio-panel button { padding-top: 4px; padding-bottom: 4px; }
 .radio-panel .rp-head { font-size: 20px; color: var(--muted); padding: 4px 8px 6px; }
 .radio-panel button { align-items: flex-start; }
 .radio-panel button.on { background: var(--sel); }

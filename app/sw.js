@@ -1,5 +1,5 @@
 // Offline support: the app shell is cached so Carver opens without a connection.
-const VERSION = 'carver-v5';
+const VERSION = 'carver-v6';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/main.js', 'js/store.js', 'js/db.js', 'js/sync.js', 'js/editor.js', 'js/scene.js', 'js/sound.js', 'js/icons.js',

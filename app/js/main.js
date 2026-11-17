@@ -12,7 +12,7 @@ import * as files from './files.js';
 import { pdfjs } from './vendor.js';
 
 // ---------------------------------------------------------------- settings
-const APP_VERSION = '2026.11.17-c';
+const APP_VERSION = '2026.11.17-d';
 const SETTINGS_KEY = 'faulkner.settings';
 const DEFAULTS = {
   theme: 'auto', font: 'courier', fontSize: 19, width: 680,

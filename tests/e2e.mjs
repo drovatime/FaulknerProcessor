@@ -350,6 +350,11 @@ await A.waitForTimeout(150);
 await A.screenshot({ path: `${OUT}/17-overcast-orcas-radio.png` });
 await A.click('.radio-panel [data-st=fog]');
 check(await A.evaluate(() => window.carver.radio.playing()) === 'fog', 'radio switches to Fog Line');
+for (const st of ['tide', 'rain', 'waltz', 'noir']) {
+  await A.click(`.radio-panel [data-st=${st}]`);
+  await A.waitForTimeout(400);
+  check(await A.evaluate(() => window.carver.radio.playing()) === st, `radio plays ${st}`);
+}
 await A.click('.radio-panel [data-st=off]');
 check(await A.evaluate(() => window.carver.radio.playing()) === null, 'radio turns off');
 await A.mouse.click(5, 600);

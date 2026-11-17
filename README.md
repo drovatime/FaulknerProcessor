@@ -33,8 +33,15 @@ syncs your writing between devices through a private GitHub repository that you 
   notes, and a file with several headings can be split into one note per heading. PDFs and images are kept as attachments
   you can view in the app. They sync too, and you can copy a PDF's text into a note.
 - **Backup.** You can download a full backup of your binder.
-- **Cabin radio.** Two original 8-bit stations play live in the browser: *Fog Line* (slow, misty synth) and *Harbor Lights*
-  (walking bass, brushes and vibes). A pixel radio on the desk lights up while one is playing.
+- **Cabin radio.** Six original 8-bit stations play live in the browser and never repeat note for note:
+  - *Fog Line*: slow, misty synth
+  - *Low Tide*: ambient pads and chimes over surf
+  - *Rain on the Sound*: lo-fi keys, a lazy beat and rain
+  - *Harbor Lights*: walking bass, brushes and vibes
+  - *Cedar Waltz*: a jazz waltz
+  - *Last Call*: a noir station with muted trumpet
+
+  A pixel radio on the desk lights up while one is playing.
 - **Weather and wildlife.** The weather can be clear, overcast, drizzle, rain or fog, or left to a "coastal forecast". An optional
   orca pod passes by in the water every minute or so.
 - **eBook covers.** Add a cover image when compiling an eBook. It shows in the preview, is built into the EPUB, and syncs to your other devices.
