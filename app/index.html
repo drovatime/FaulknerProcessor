@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Faulkner</title>
+  <meta name="description" content="A retro, coast-side word processor for fiction.">
+  <meta name="theme-color" content="#1c2b2d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Faulkner">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=Special+Elite&family=VT323&display=swap">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <button class="icon-btn" id="btn-binder" title="Binder" aria-label="Toggle binder" data-icon="menu"></button>
+      <div class="brand" aria-hidden="true">FAULKNER</div>
+      <nav id="crumbs" aria-label="Location"></nav>
+      <div class="spacer"></div>
+      <button class="chip" id="sync-status" title="Sync"><span class="dot"></span><span class="label">Local</span></button>
+      <button class="icon-btn" id="btn-focus" title="Focus mode (Ctrl+Shift+F)" aria-label="Focus mode" data-icon="eye"></button>
+      <button class="icon-btn" id="btn-inspector" title="Inspector" aria-label="Toggle inspector" data-icon="info"></button>
+      <button class="icon-btn" id="btn-settings" title="Settings" aria-label="Settings" data-icon="gear"></button>
+    </header>
+
+    <aside id="binder" aria-label="Binder">
+      <div class="binder-head">
+        <input id="search" type="search" placeholder="Search the binder…" autocomplete="off">
+      </div>
+      <div id="tree" role="tree"></div>
+      <div class="binder-foot">
+        <button class="btn" id="btn-new-project"><span data-icon="plus"></span> Project</button>
+        <button class="btn ghost" id="btn-trash"><span data-icon="trash"></span> Trash <span id="trash-count"></span></button>
+      </div>
+    </aside>
+
+    <main id="main">
+      <div id="window" aria-hidden="true"><canvas id="scene"></canvas></div>
+      <div id="toolbar" role="toolbar" aria-label="Formatting">
+        <button data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+        <button data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+        <button data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+        <span class="sep"></span>
+        <button data-cmd="h2" title="Heading">H</button>
+        <button data-cmd="quote" title="Block quote">❝</button>
+        <button data-cmd="break" title="Scene break">⁂</button>
+        <span class="sep"></span>
+        <button data-cmd="undo" title="Undo">↶</button>
+        <button data-cmd="redo" title="Redo">↷</button>
+        <span class="spacer"></span>
+        <button data-cmd="typewriter" class="toggle" title="Typewriter scrolling">⌨ Typewriter</button>
+      </div>
+      <section id="view"></section>
+      <footer id="statusbar">
+        <span id="stat-doc"></span>
+        <span class="spacer"></span>
+        <span id="stat-today" title="Words written today"></span>
+        <span class="goal-bar" id="goal-bar" title="Daily goal"><span></span></span>
+      </footer>
+    </main>
+
+    <aside id="inspector" aria-label="Inspector"></aside>
+    <div id="scrim"></div>
+    <div id="menu" class="menu" hidden></div>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <dialog id="settings">
+    <form method="dialog" class="dialog-body" id="settings-form"></form>
+  </dialog>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
