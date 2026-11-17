@@ -5,19 +5,20 @@ import { icon, hydrateIcons } from './icons.js';
 import { createScene } from './scene.js';
 import { mountEditor, sanitize } from './editor.js';
 import * as sound from './sound.js';
+import * as radio from './radio.js';
 import { openCompile } from './compile.js';
 import * as importer from './importer.js';
 import * as files from './files.js';
 import { pdfjs } from './vendor.js';
 
 // ---------------------------------------------------------------- settings
-const APP_VERSION = '2026.11.17-b';
+const APP_VERSION = '2026.11.17-c';
 const SETTINGS_KEY = 'faulkner.settings';
 const DEFAULTS = {
   theme: 'auto', font: 'courier', fontSize: 19, width: 680,
   typewriter: true, paragraphs: 'indent', smartQuotes: true, sounds: true, volume: 0.45,
   scene: true, sceneTime: 'auto', weather: 'auto', body: 'seafoam', motion: true,
-  dailyGoal: 500,
+  dailyGoal: 500, orcas: true, radioStation: 'fog', radioVolume: 0.5,
 };
 let settings = { ...DEFAULTS, ...safeJSON(localStorage.getItem(SETTINGS_KEY)) };
 function safeJSON(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
@@ -886,10 +887,11 @@ function openSettings(section) {
       </div>
       <div class="field-row">
         <label class="field"><span>Time of day</span><select name="sceneTime">${opt('auto', 'Follow the clock', settings.sceneTime)}${opt('dawn', 'Dawn', settings.sceneTime)}${opt('day', 'Day', settings.sceneTime)}${opt('dusk', 'Dusk', settings.sceneTime)}${opt('night', 'Night', settings.sceneTime)}</select></label>
-        <label class="field"><span>Weather</span><select name="weather">${opt('auto', 'Coastal forecast', settings.weather)}${opt('clear', 'Clear', settings.weather)}${opt('drizzle', 'Drizzle', settings.weather)}${opt('rain', 'Rain', settings.weather)}${opt('fog', 'Fog', settings.weather)}</select></label>
+        <label class="field"><span>Weather</span><select name="weather">${opt('auto', 'Coastal forecast', settings.weather)}${opt('clear', 'Clear', settings.weather)}${opt('overcast', 'Overcast', settings.weather)}${opt('drizzle', 'Drizzle', settings.weather)}${opt('rain', 'Rain', settings.weather)}${opt('fog', 'Fog', settings.weather)}</select></label>
       </div>
       <label class="check"><input type="checkbox" name="scene" ${settings.scene ? 'checked' : ''}> Show the window</label>
       <label class="check"><input type="checkbox" name="motion" ${settings.motion ? 'checked' : ''}> Animate the scene</label>
+      <label class="check"><input type="checkbox" name="orcas" ${settings.orcas ? 'checked' : ''}> Orca pod (passes by every minute or so)</label>
     </section>
 
     <section>
@@ -1030,7 +1032,7 @@ function applySettings() {
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (settings.scene && !scene) scene = createScene($('#scene'), {});
   if (scene) {
-    scene.setOptions({ time: settings.sceneTime, weather: settings.weather, body: b, bodyHi: hi, bodyLo: lo, motion: settings.motion && !reduce });
+    scene.setOptions({ time: settings.sceneTime, weather: settings.weather, body: b, bodyHi: hi, bodyLo: lo, motion: settings.motion && !reduce, orcas: settings.orcas, radio: !!radio.playing() });
     settings.scene ? scene.resume() : scene.pause();
   }
   renderStatus();
@@ -1054,6 +1056,53 @@ $('#btn-inspector').onclick = () => {
 $('#scrim').onclick = closeDrawers;
 $('#btn-settings').onclick = () => openSettings();
 $('#btn-focus').onclick = () => toggleFocus();
+
+// ---------------------------------------------------------------- cabin radio
+radio.setVolume(settings.radioVolume);
+radio.onChange(st => {
+  $('#btn-radio').classList.toggle('on', !!st);
+  $('#btn-radio').title = st ? `Cabin radio: ${radio.STATIONS[st].name}` : 'Cabin radio';
+  scene?.setOptions({ radio: !!st });
+  renderRadioPanel();
+});
+let radioPanel = null;
+function renderRadioPanel() {
+  if (!radioPanel) return;
+  const cur = radio.playing();
+  radioPanel.innerHTML = `<div class="rp-head pixel">Cabin radio</div>
+    ${Object.entries(radio.STATIONS).map(([k, st]) => `<button data-st="${k}" class="${cur === k ? 'on' : ''}"><span class="rp-dot"></span><span>${esc(st.name)}<small>${esc(st.blurb)}</small></span></button>`).join('')}
+    <button data-st="off" class="${cur ? '' : 'on'}"><span class="rp-dot"></span><span>Off</span></button>
+    <label>Volume <input type="range" min="0" max="1" step="0.05" value="${settings.radioVolume}" aria-label="Radio volume"></label>
+    ${/iPhone|iPad/.test(navigator.userAgent) ? '<div class="rp-note">No sound? Check that your phone isn’t on silent.</div>' : ''}`;
+}
+function closeRadio() {
+  radioPanel?.remove();
+  radioPanel = null;
+  document.removeEventListener('pointerdown', radioOutside, true);
+}
+function radioOutside(e) { if (radioPanel && !radioPanel.contains(e.target) && !e.target.closest('#btn-radio')) closeRadio(); }
+$('#btn-radio').onclick = () => {
+  if (radioPanel) return closeRadio();
+  radioPanel = document.createElement('div');
+  radioPanel.className = 'menu radio-panel';
+  document.body.appendChild(radioPanel);
+  renderRadioPanel();
+  const r = $('#btn-radio').getBoundingClientRect();
+  radioPanel.style.top = `${r.bottom + 6}px`;
+  radioPanel.style.left = `${Math.max(8, Math.min(r.right - 270, innerWidth - 278))}px`;
+  radioPanel.addEventListener('click', e => {
+    const b = e.target.closest('[data-st]');
+    if (!b) return;
+    if (b.dataset.st === 'off') radio.stop();
+    else { radio.play(b.dataset.st); saveSettings({ radioStation: b.dataset.st }); }
+  });
+  radioPanel.addEventListener('input', e => {
+    if (e.target.type !== 'range') return;
+    radio.setVolume(+e.target.value);
+    saveSettings({ radioVolume: +e.target.value });
+  });
+  setTimeout(() => document.addEventListener('pointerdown', radioOutside, true), 0);
+};
 $('#btn-new-project').onclick = () => { newProject(); if (narrow()) closeDrawers(); };
 $('#btn-trash').onclick = () => { select('trash'); if (narrow()) closeDrawers(); };
 $('#search').addEventListener('input', e => { searchTerm = e.target.value.trim(); renderBinder(); });
@@ -1109,4 +1158,4 @@ async function boot() {
 boot();
 
 // Exposed for debugging and tests.
-window.carver = { store, sync, select, runSync };
+window.carver = { store, sync, select, runSync, radio, scene: () => scene };

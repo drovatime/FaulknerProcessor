@@ -73,13 +73,13 @@ function autoWeather(d = new Date()) {
   const key = d.getFullYear() * 400 + d.getMonth() * 32 + d.getDate();
   const r = rng(key)();
   // It's the Pacific Northwest.
-  return r < 0.3 ? 'clear' : r < 0.6 ? 'drizzle' : r < 0.8 ? 'fog' : 'rain';
+  return r < 0.2 ? 'clear' : r < 0.5 ? 'overcast' : r < 0.7 ? 'drizzle' : r < 0.85 ? 'fog' : 'rain';
 }
 
 export function createScene(canvas, initial = {}) {
   const ctx = canvas.getContext('2d', { alpha: false });
   let W = 320;
-  let opts = { time: 'auto', weather: 'auto', body: '#6fa596', bodyHi: '#97c7b8', bodyLo: '#4b7b6d', motion: true, ...initial };
+  let opts = { time: 'auto', weather: 'auto', orcas: true, radio: false, body: '#6fa596', bodyHi: '#97c7b8', bodyLo: '#4b7b6d', motion: true, ...initial };
   let world = null;
   let raf = 0, last = 0, t0 = performance.now();
   let running = true;
@@ -163,7 +163,7 @@ export function createScene(canvas, initial = {}) {
     const time = opts.time === 'auto' ? autoTime() : opts.time;
     const weather = opts.weather === 'auto' ? autoWeather() : opts.weather;
     const P = PALETTES[time] || PALETTES.day;
-    const overcast = weather === 'clear' ? 0 : weather === 'drizzle' ? 0.35 : weather === 'fog' ? 0.45 : 0.55;
+    const overcast = { clear: 0, drizzle: 0.35, fog: 0.45, rain: 0.55, overcast: 0.6 }[weather] ?? 0;
     const skyC = P.sky.map((c, i) => mix(c, time === 'night' ? mix(GREY.sky[i], '#000000', 0.8) : GREY.sky[i], overcast));
     const seaC = P.sea.map((c, i) => mix(c, time === 'night' ? mix(GREY.sea[i], '#000000', 0.7) : GREY.sea[i], overcast * 0.7));
 
@@ -205,6 +205,18 @@ export function createScene(canvas, initial = {}) {
       px(x + 3, c.y - 1, c.w - 7, 1, col);
       px(x + Math.floor(c.w * 0.3), c.y - 2, Math.floor(c.w * 0.35), 1, col);
       px(x + 1, c.y + 2, c.w - 3, 1, mix(col, skyC[3], 0.5));
+    }
+
+    // A low, ragged cloud deck on grey days
+    if (overcast >= 0.35) {
+      const deck = mix(skyC[1], P.cloud, time === 'night' ? 0.15 : 0.35);
+      const deckLo = mix(deck, skyC[3], 0.45);
+      const depth = 4 + overcast * 10;
+      for (let x = 0; x < W; x++) {
+        const b = Math.round(depth + 2.5 * Math.sin(x * 0.045 + t * 0.06) + 1.5 * Math.sin(x * 0.13 - t * 0.09));
+        px(x, 0, 1, b, deck);
+        if ((x + Math.floor(t * 2)) % 3 === 0) px(x, b, 1, 1, deckLo);
+      }
     }
 
     // Gull
@@ -264,6 +276,9 @@ export function createScene(canvas, initial = {}) {
       }
       ctx.globalAlpha = 1;
     }
+
+    // Orca pod (farther out than the sea stacks, so drawn first)
+    if (opts.orcas) drawOrcas(t, P);
 
     // Sea stacks (a big haystack and two needles)
     const st = world.stack;
@@ -372,6 +387,9 @@ export function createScene(canvas, initial = {}) {
     px(bx + 2, DESK - 8, 13, 2, '#2f4f6b'); px(bx + 2, DESK - 8, 13, 1, '#45698a');
     px(bx + 4, DESK - 7, 6, 1, '#d8c69a');
 
+    // Cabin radio
+    drawRadio(bx + 19, t);
+
     // Typewriter
     drawTypewriter(P, t);
 
@@ -393,6 +411,86 @@ export function createScene(canvas, initial = {}) {
         px(cxl - 1, DESK - 5, 3, 4, '#efe2c4');
         px(cxl, DESK - 8 + (flick > 0.88 ? 0 : 1), 1, 2, '#ffd27a');
         px(cxl, DESK - 7, 1, 1, '#fff5c8');
+      }
+    }
+  }
+
+  // A pod of orcas travels across the water every minute or so, surfacing and blowing.
+  function drawOrcas(t, P) {
+    const PERIOD = 70, CROSS = 42;
+    const u = (t % PERIOD) / CROSS;
+    if (u > 1) return;
+    const lane = HORIZON + 9;
+    const lead = Math.round(W + 30 - u * (W + 90));
+    const pod = [
+      { dx: 0, ph: 0.0, male: true, dy: 0 },
+      { dx: 11, ph: 0.33, dy: 2 },
+      { dx: 18, ph: 0.62, calf: true, dy: 2 },
+      { dx: 27, ph: 0.18, dy: -1 },
+    ];
+    const BLACK = '#0a0c10', WHITE = '#eef0ec', GREY = '#8c949a';
+    for (const o of pod) {
+      const s = (t * 0.32 + o.ph) % 1;
+      if (s > 0.5) continue;
+      const a = s / 0.5;
+      const lift = Math.sin(Math.PI * a);
+      const rows = Math.round(lift * (o.calf ? 3 : 4));
+      if (rows < 1) continue;
+      const wl = lane + o.dy;
+      const half = Math.round((o.calf ? 4 : 6) * (0.45 + 0.55 * lift));
+      const cx = lead + o.dx - Math.round((a - 0.5) * 6);
+      // back
+      for (let dx = -half; dx <= half; dx++) {
+        const k = 1 - (dx / (half + 1)) ** 2;
+        const hgt = Math.round(rows * Math.sqrt(Math.max(0, k)));
+        if (hgt > 0) px(cx + dx, wl - hgt, 1, hgt, BLACK);
+      }
+      // dorsal fin (tall and straight on the bull, curved on the others)
+      if (lift > 0.35) {
+        const fx = cx + 1, top = wl - rows;
+        const fh = o.male ? 5 : o.calf ? 2 : 3;
+        for (let i = 1; i <= fh; i++) px(fx + (o.male ? 0 : Math.floor(i / 2)), top - i, o.male || i < fh ? 2 : 1, 1, BLACK);
+        px(fx + 3, top, 2, 1, GREY); // saddle patch
+      }
+      // eye patch on the front of the rise
+      if (a < 0.55 && rows >= 2) px(cx - half + 2, wl - rows + 1, 2, 1, WHITE);
+      // blow
+      if (a > 0.08 && a < 0.4 && !o.calf) {
+        const b = (a - 0.08) / 0.32;
+        ctx.globalAlpha = 0.85 * (1 - b);
+        const bx = cx - half + 1, by = wl - rows;
+        for (let i = 1; i <= 2 + Math.round(b * 4); i++) px(bx + (i > 3 ? (i % 2 ? -1 : 1) : 0), by - i, 1, 1, WHITE);
+        if (b > 0.4) { px(bx - 1, by - 6, 3, 1, WHITE); px(bx - 2, by - 7, 2, 1, WHITE); }
+        ctx.globalAlpha = 1;
+      }
+      // splash where the body breaks the surface
+      px(cx - half - 1, wl - 1, 1, 1, P.foam);
+      px(cx + half + 1, wl - 1, 1, 1, P.foam);
+      if (Math.sin(t * 6 + o.dx) > 0) px(cx + half + 2, wl, 2, 1, P.foam);
+    }
+  }
+
+  // A little transistor radio; music notes drift up while it plays.
+  function drawRadio(x, t) {
+    const y = DESK - 7;
+    px(x + 8, y - 4, 1, 1, '#9aa0a6'); px(x + 9, y - 5, 1, 1, '#9aa0a6'); px(x + 7, y - 3, 1, 3, '#9aa0a6'); // antenna
+    px(x, y, 12, 7, '#2f4f4a');
+    px(x, y, 12, 1, '#4c736b');
+    px(x + 1, y + 2, 5, 4, '#1b2b28');
+    for (let gy = 0; gy < 2; gy++) for (let gx = 0; gx < 3; gx++) px(x + 1 + gx * 2, y + 2 + gy * 2, 1, 1, '#4c736b');
+    const on = !!opts.radio;
+    px(x + 7, y + 2, 4, 2, on ? '#ffcc66' : '#c9bf9e');
+    px(x + 7 + (on ? 1 + Math.floor((t * 0.5) % 2) : 1), y + 2, 1, 2, '#7a2c27');
+    px(x + 8, y + 5, 2, 1, on ? '#ffcc66' : '#6a7a76');
+    if (on) {
+      for (let i = 0; i < 2; i++) {
+        const ph = (t * 0.45 + i * 0.5) % 1;
+        const nx = x + 3 + i * 4 + Math.round(Math.sin(t * 2 + i * 3) * 1.5);
+        const ny = y - 2 - Math.floor(ph * 12);
+        ctx.globalAlpha = 1 - ph;
+        const c = i ? '#f2c66d' : '#e8eef0';
+        px(nx, ny, 1, 3, c); px(nx - 1, ny + 2, 1, 1, c); px(nx + 1, ny, 1, 1, c);
+        ctx.globalAlpha = 1;
       }
     }
   }
@@ -524,6 +622,8 @@ export function createScene(canvas, initial = {}) {
     key,
     resize,
     setOptions(o) { opts = { ...opts, ...o }; draw(performance.now()); },
+    // Jump the animation clock (used by tests and screenshots).
+    setClock(seconds) { t0 = performance.now() - seconds * 1000; draw(performance.now()); },
     pause() { running = false; cancelAnimationFrame(raf); },
     resume() { if (!running) { running = true; raf = requestAnimationFrame(frame); } },
     current() { return { time: opts.time === 'auto' ? autoTime() : opts.time, weather: opts.weather === 'auto' ? autoWeather() : opts.weather }; },

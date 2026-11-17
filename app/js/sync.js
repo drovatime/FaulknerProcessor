@@ -215,7 +215,7 @@ async function syncOnce(cfg, hooks) {
       }
     }
     // Attachments: upload new ones, drop ones nothing points to any more.
-    const referenced = new Set(store.allItems().filter(i => i.type === 'file' && i.fileSha).map(i => i.fileSha));
+    const referenced = new Set(attachments().map(a => a.sha));
     for (const sha of referenced) {
       if (remoteFiles.has(sha)) continue;
       const rec = await files.getFile(sha);
@@ -301,11 +301,20 @@ export function fetchFile(sha, mime) {
   }
   return fetching.get(sha);
 }
-export async function fetchMissingFiles() {
+// Every binary file the binder points at: uploaded attachments and eBook covers.
+function attachments() {
+  const out = [];
   for (const it of store.allItems()) {
-    if (it.type !== 'file' || !it.fileSha) continue;
-    if (await files.hasFile(it.fileSha)) continue;
-    try { await fetchFile(it.fileSha, it.mime); } catch (e) { console.warn('could not fetch attachment', e); }
+    if (it.type === 'file' && it.fileSha) out.push({ sha: it.fileSha, mime: it.mime });
+    const cover = it.compile && it.compile.meta;
+    if (cover && cover.coverSha) out.push({ sha: cover.coverSha, mime: cover.coverMime });
+  }
+  return out;
+}
+export async function fetchMissingFiles() {
+  for (const a of attachments()) {
+    if (await files.hasFile(a.sha)) continue;
+    try { await fetchFile(a.sha, a.mime); } catch (e) { console.warn('could not fetch attachment', e); }
   }
 }
 

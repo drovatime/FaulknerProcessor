@@ -284,11 +284,23 @@ const kdpDocx = await exportBytes('docx');
 await A.click('input[name=preset][value=ebook]');
 await A.waitForFunction(() => /pages?/.test(document.querySelector('.cmp-info')?.textContent || '') && document.querySelector('[data-export=epub]'));
 await A.waitForTimeout(300);
+const [coverChooser] = await Promise.all([A.waitForEvent('filechooser'), A.click('.cover-pick .file-btn')]);
+await coverChooser.setFiles(path.join(ROOT, 'icons', 'icon-512.png'));
+await A.waitForSelector('#compile .cmp-page.cover img');
+await A.waitForFunction(() => document.querySelector('#compile .cmp-page.cover img').naturalWidth === 512);
+check(/1\.6 times/.test(await A.textContent('.cover-actions small')), 'cover upload shows shape advice for a square image');
+await A.screenshot({ path: `${OUT}/14b-compile-ebook-cover.png` });
 const epub = await exportBytes('epub');
 await A.screenshot({ path: `${OUT}/14-compile-ebook.png` });
 await A.click('input[name=preset][value=reading]');
 await A.waitForSelector('[data-export=md]');
 const md = fs.readFileSync(await exportBytes('md'), 'utf8');
+{
+  const py = (await import('node:child_process')).execFileSync('python3', ['-I', '-c', `import zipfile,sys
+z=zipfile.ZipFile(sys.argv[1]); n=z.namelist(); opf=z.read('OEBPS/content.opf').decode()
+print('images/cover.png' in opf and 'properties="cover-image"' in opf and 'OEBPS/images/cover.png' in n and 'cover.xhtml' in opf)`, epub]).toString().trim();
+  check(py === 'True', 'EPUB contains the cover image');
+}
 check(md.startsWith('# The Bell Buoy') && md.includes('## Chapter Three: The Cannery'), 'markdown export');
 fs.writeFileSync(path.join(OUT, 'exports.json'), JSON.stringify({ docx, kdpDocx, epub }));
 
@@ -320,6 +332,27 @@ const shape = await A.evaluate(() => {
 });
 check(shape.tags.every(t => t === 'P') && shape.indents[0] === '0px' && shape.indents.slice(1).every(v => parseFloat(v) > 0) && /A bare first line\n+Typed after Enter/.test(shape.text),
   `every line becomes an indented paragraph (${shape.html})`);
+
+// ---- Cover syncs to the vault
+await syncNow(A);
+const coverSha = await A.evaluate(() => window.carver.store.allItems().find(i => i.type === 'project').compile.meta.coverSha);
+check(gh.trees.get(gh.commits.get(gh.ref).tree).some(e => e.path === `files/${coverSha}`), 'eBook cover uploaded to vault');
+
+// ---- Overcast + orca pod + cabin radio
+await A.evaluate(() => { localStorage.setItem('faulkner.settings', JSON.stringify({ sceneTime: 'day', weather: 'overcast', sounds: false, orcas: true })); });
+await A.reload(); await A.waitForSelector('#app');
+await A.evaluate(() => window.carver.scene().setClock(21.5));
+await A.click('#btn-radio');
+await A.click('.radio-panel [data-st=harbor]');
+check(await A.evaluate(() => window.carver.radio.playing()) === 'harbor', 'radio plays Harbor Lights');
+await A.evaluate(() => window.carver.scene().setClock(21.5));
+await A.waitForTimeout(150);
+await A.screenshot({ path: `${OUT}/17-overcast-orcas-radio.png` });
+await A.click('.radio-panel [data-st=fog]');
+check(await A.evaluate(() => window.carver.radio.playing()) === 'fog', 'radio switches to Fog Line');
+await A.click('.radio-panel [data-st=off]');
+check(await A.evaluate(() => window.carver.radio.playing()) === null, 'radio turns off');
+await A.mouse.click(5, 600);
 
 check(errors.length === 0, 'no page errors' + (errors.length ? ':\n  ' + errors.join('\n  ') : ''));
 console.log(`GitHub API calls: ${gh.calls}`);

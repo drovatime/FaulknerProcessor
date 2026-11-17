@@ -645,3 +645,25 @@ dialog summary { cursor: pointer; font-weight: 600; }
   .cmp-exports { width: 100%; }
   .cmp-zoom input { width: 80px; }
 }
+
+/* eBook cover */
+.cover-pick { display: flex; gap: 12px; align-items: flex-start; }
+.cover-thumb { flex: none; width: 84px; aspect-ratio: 1 / 1.6; max-width: 100%; display: grid; place-items: center; background: var(--paper); border: 2px dashed var(--line); overflow: hidden; }
+.cover-thumb span { font-size: 12px; color: var(--muted); text-align: center; padding: 4px; }
+.cover-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cover-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; }
+.cover-actions small { font-size: 12px; line-height: 1.35; }
+.cmp-page.cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+/* Cabin radio */
+#btn-radio.on { color: #f2c66d; }
+.radio-panel { width: 270px; padding: 6px; }
+.radio-panel .rp-head { font-size: 20px; color: var(--muted); padding: 4px 8px 6px; }
+.radio-panel button { align-items: flex-start; }
+.radio-panel button.on { background: var(--sel); }
+.radio-panel button small { display: block; font-family: system-ui, sans-serif; font-size: 12px; color: var(--muted); letter-spacing: 0; }
+.radio-panel .rp-dot { width: 10px; height: 10px; margin-top: 6px; flex: none; border: 2px solid currentColor; }
+.radio-panel button.on .rp-dot { background: #f2c66d; border-color: #b8892f; }
+.radio-panel label { display: flex; align-items: center; gap: 8px; padding: 8px 10px 4px; font-size: 13px; color: var(--muted); }
+.radio-panel input[type=range] { flex: 1; accent-color: var(--accent); }
+.radio-panel .rp-note { padding: 2px 10px 6px; font-size: 11px; color: var(--muted); }

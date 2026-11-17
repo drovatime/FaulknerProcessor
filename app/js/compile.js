@@ -5,6 +5,8 @@ import * as store from './store.js';
 import { sanitize } from './editor.js';
 import { icon } from './icons.js';
 import { jszip } from './vendor.js';
+import * as files_ from './files.js';
+import * as sync from './sync.js';
 
 const IN = 96; // CSS px per inch
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -220,6 +222,7 @@ function buildFlow(cfg, L, chapters) {
       flow.push({ el: d });
     }
   } else if (P.kind === 'book' || P.kind === 'ebook') {
+    if (P.kind === 'ebook' && meta.coverSha && L.coverUrl) flow.push({ cover: true });
     if (o.titlePage) {
       const d = el(`<div class="tp-title">${esc(title)}</div>${meta.subtitle ? `<div class="tp-sub">${esc(meta.subtitle)}</div>` : ''}<div class="tp-author">${esc(author)}</div>`, 'title-page', 'front');
       d.style.height = `${box.h - 2}px`;
@@ -335,6 +338,7 @@ async function paginate(cfg, L, flow, isStale) {
   let count = 0;
   for (const item of flow) {
     if (++count % 150 === 0) { await tick(); if (isStale()) { host.remove(); return null; } }
+    if (item.cover) { finish(); pages.push({ html: '', kind: 'cover' }); continue; }
     if (item.brk) {
       finish();
       if (item.recto && pages.length % 2 === 1) pages.push({ html: '', kind: 'blank' });
@@ -414,6 +418,7 @@ function decorate(pages, cfg, L) {
 }
 
 function pageHtml(pg, L) {
+  if (pg.kind === 'cover') return `<div class="cmp-page cover" style="width:${L.w * IN}px;height:${L.h * IN}px"><img src="${L.coverUrl}" alt="Cover"></div>`;
   const box = bodyBox(L);
   const left = (L.P.mirror ? (pg.recto ? L.m.inside : L.m.outside) : L.m.inside) * IN;
   const cls = `cmp-page ${pg.kind} ${pg.recto ? 'recto' : 'verso'}`;
@@ -422,6 +427,44 @@ function pageHtml(pg, L) {
     <div class="cmp-body-box" style="left:${left}px;top:${L.m.top * IN}px;width:${box.w}px;height:${box.h}px">${pg.html}</div>
     ${pg.folio ? `<div class="cmp-folio" style="left:${left}px;width:${box.w}px;bottom:${L.m.bottom * IN * 0.42}px">${pg.folio}</div>` : ''}
   </div>`;
+}
+
+// ------------------------------------------------------------------ eBook cover
+const coverUrls = new Map();
+async function coverUrl(meta) {
+  if (!meta.coverSha) return null;
+  if (coverUrls.has(meta.coverSha)) return coverUrls.get(meta.coverSha);
+  let rec = await files_.getFile(meta.coverSha);
+  if (!rec && sync.isConfigured()) { try { rec = await sync.fetchFile(meta.coverSha, meta.coverMime); } catch { /* offline */ } }
+  if (!rec) return null;
+  const url = URL.createObjectURL(rec.blob);
+  coverUrls.set(meta.coverSha, url);
+  return url;
+}
+async function imageSize(file) {
+  try { const b = await createImageBitmap(file); const r = [b.width, b.height]; b.close?.(); return r; }
+  catch {
+    return new Promise(res => { const i = new Image(); i.onload = () => res([i.naturalWidth, i.naturalHeight]); i.onerror = () => res([0, 0]); i.src = URL.createObjectURL(file); });
+  }
+}
+function coverAdvice(meta) {
+  if (!meta.coverSha) return 'KDP recommends 1600 × 2560 pixels (a 1 : 1.6 shape), as a JPG. The same image works for Apple Books, Kobo and Google Play.';
+  const [w, h] = [meta.coverW || 0, meta.coverH || 0];
+  const notes = [`${w} × ${h} px.`];
+  const ratio = w ? h / w : 0;
+  if (ratio && (ratio < 1.4 || ratio > 1.8)) notes.push('Stores expect a tall cover about 1.6 times as high as it is wide.');
+  if (h && h < 1600) notes.push('Under 1600 px tall can look soft on modern screens.');
+  if (notes.length === 1) notes.push('Looks good for KDP and the other stores.');
+  return notes.join(' ');
+}
+async function setCover(file) {
+  if (!/^image\/(jpeg|png)$/.test(file.type)) { state.deps.toast('Please choose a JPG or PNG image.'); return; }
+  const rec = await files_.saveFile(file);
+  const [w, h] = await imageSize(file);
+  Object.assign(state.cfg.meta, { coverSha: rec.sha, coverMime: rec.mime, coverW: w, coverH: h });
+  persist();
+  renderShell(document.getElementById('compile'));
+  relayout();
 }
 
 // ------------------------------------------------------------------ UI
@@ -510,6 +553,17 @@ function renderShell(el) {
         <label class="cmp-preset ${k === cfg.preset ? 'on' : ''}"><input type="radio" name="preset" value="${k}" ${k === cfg.preset ? 'checked' : ''}>
           <b>${esc(p.label)}</b><small>${esc(p.blurb)}</small></label>`).join('')}</div>
 
+      ${P.kind === 'ebook' ? `
+      <h3>Cover</h3>
+      <div class="cover-pick">
+        <div class="cover-thumb">${meta.coverSha ? '<img data-cover-img alt="Cover">' : '<span>No cover yet</span>'}</div>
+        <div class="cover-actions">
+          <label class="btn ghost small file-btn">${meta.coverSha ? 'Replace image…' : 'Upload cover…'}<input type="file" accept="image/jpeg,image/png" data-cover hidden></label>
+          ${meta.coverSha ? '<button type="button" class="btn ghost small danger" data-cover-remove>Remove</button>' : ''}
+          <small class="muted">${esc(coverAdvice(meta))}</small>
+        </div>
+      </div>` : ''}
+
       <h3>Book details</h3>
       <label class="field"><span>Title</span><input name="m.title" value="${esc(meta.title)}"></label>
       ${!isMs ? `<label class="field"><span>Subtitle</span><input name="m.subtitle" value="${esc(meta.subtitle)}" placeholder="Optional"></label>` : ''}
@@ -563,6 +617,15 @@ function renderShell(el) {
     el.querySelector('.cmp-main').classList.toggle('show-preview', b.dataset.tab === 'preview');
   });
   el.querySelectorAll('[data-export]').forEach(b => b.onclick = () => doExport(b.dataset.export));
+  el.querySelector('[data-cover]')?.addEventListener('change', e => { const f = e.target.files[0]; if (f) setCover(f); });
+  el.querySelector('[data-cover-remove]')?.addEventListener('click', () => {
+    for (const k of ['coverSha', 'coverMime', 'coverW', 'coverH']) delete state.cfg.meta[k];
+    persist();
+    renderShell(document.getElementById('compile'));
+    relayout();
+  });
+  const thumb = el.querySelector('[data-cover-img]');
+  if (thumb) coverUrl(meta).then(u => { if (u) thumb.src = u; });
   el.querySelector('.cmp-zoom input').oninput = e => { state.zoom = +e.target.value; localStorage.setItem('carver.cmpzoom', state.zoom); renderPages(); };
 }
 
@@ -602,6 +665,8 @@ async function relayout() {
   const cfg = { preset: state.cfg.preset, meta: state.cfg.meta, opts: opts() };
   const chapters = gatherChapters(state.rootId);
   let L = layoutFor(cfg);
+  L.coverUrl = cfg.preset === 'ebook' ? await coverUrl(cfg.meta) : null;
+  if (isStale()) return;
   try { await document.fonts.load(`${cfg.opts.size}pt "${L.font.load}"`); await document.fonts.load(`italic ${cfg.opts.size}pt "${L.font.load}"`); } catch { /* fallback font */ }
   if (isStale()) return;
   let pages, words, note = '';
@@ -944,6 +1009,15 @@ async function buildEpub(cfg, chapters) {
 <head><meta charset="utf-8"/><title>${xml(title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
 <body class="${cls}">${body}</body></html>`;
   const files = [];
+  let cover = null;
+  if (m.coverSha) {
+    const rec = await files_.getFile(m.coverSha) || (sync.isConfigured() ? await sync.fetchFile(m.coverSha, m.coverMime).catch(() => null) : null);
+    if (rec) {
+      const ext = rec.mime === 'image/png' ? 'png' : 'jpg';
+      cover = { blob: rec.blob, href: `images/cover.${ext}`, mime: rec.mime === 'image/png' ? 'image/png' : 'image/jpeg' };
+      files.push({ id: 'cover', file: 'cover.xhtml', title: 'Cover', html: page(m.title || 'Cover', `<section epub:type="cover" class="cover"><img src="${cover.href}" alt="${xml(m.title || 'Cover')}"/></section>`, 'cover') });
+    }
+  }
   if (o.titlePage) files.push({ id: 'title', file: 'title.xhtml', title: 'Title Page', html: page(m.title, `<section epub:type="titlepage" class="titlepage"><h1>${xml(m.title || 'Untitled')}</h1>${m.subtitle ? `<p class="sub">${xml(m.subtitle)}</p>` : ''}<p class="author">${xml(m.author || '')}</p></section>`) });
   if (o.copyrightPage) files.push({ id: 'copyright', file: 'copyright.xhtml', title: 'Copyright', html: page('Copyright', `<section epub:type="copyright-page" class="copyright">${(m.copyright || defaultCopyright(m)).split('\n').map(l => (l.trim() ? `<p>${xml(l)}</p>` : '<p class="gap">&#160;</p>')).join('')}</section>`) });
   if (m.dedication && m.dedication.trim()) files.push({ id: 'dedication', file: 'dedication.xhtml', title: 'Dedication', html: page('Dedication', `<section epub:type="dedication" class="dedication"><p>${m.dedication.split('\n').map(xml).join('<br/>')}</p></section>`) });
@@ -966,13 +1040,15 @@ h2{font-weight:normal;font-size:1.5em;margin:.3em 0 0}
 blockquote{margin:1em 1.5em;font-style:italic}
 .titlepage{text-align:center;margin-top:30%}.titlepage h1{font-weight:normal;font-size:2em}.titlepage p{text-indent:0;text-align:center}
 .titlepage .author{margin-top:2em;letter-spacing:.1em;text-transform:uppercase;font-size:.9em}
+body.cover{margin:0;padding:0;text-align:center}.cover img{max-width:100%;max-height:100%;height:auto}
 .copyright p{text-indent:0;font-size:.8em}.dedication{margin-top:30%;text-align:center;font-style:italic}.dedication p{text-indent:0;text-align:center}`;
   const opf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="en">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
 <dc:identifier id="bookid">${uid}</dc:identifier><dc:title>${xml(m.title || 'Untitled')}</dc:title><dc:creator>${xml(m.author || 'Unknown')}</dc:creator><dc:language>en</dc:language>
-<meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</meta></metadata>
+${cover ? '<meta name="cover" content="cover-image"/>' : ''}<meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</meta></metadata>
 <manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="css" href="style.css" media-type="text/css"/><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+${cover ? `<item id="cover-image" href="${cover.href}" media-type="${cover.mime}" properties="cover-image"/>` : ''}
 ${files.map(f => `<item id="${f.id}" href="${f.file}" media-type="application/xhtml+xml"/>`).join('\n')}</manifest>
 <spine toc="ncx">${files.map(f => `<itemref idref="${f.id}"/>`).join('')}</spine></package>`;
   const ncx = `<?xml version="1.0" encoding="UTF-8"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="${uid}"/></head><docTitle><text>${xml(m.title)}</text></docTitle><navMap>${tocItems.map((f, i) => `<navPoint id="np${i + 1}" playOrder="${i + 1}"><navLabel><text>${xml(f.title)}</text></navLabel><content src="${f.file}"/></navPoint>`).join('')}</navMap></ncx>`;
@@ -984,6 +1060,7 @@ ${files.map(f => `<item id="${f.id}" href="${f.file}" media-type="application/xh
   zip.file('OEBPS/toc.ncx', ncx);
   zip.file('OEBPS/style.css', css);
   for (const f of files) zip.file(`OEBPS/${f.file}`, f.html);
+  if (cover) zip.file(`OEBPS/${cover.href}`, cover.blob, { compression: 'STORE' });
   return zip.generateAsync({ type: 'blob', mimeType: 'application/epub+zip' });
 }
 
