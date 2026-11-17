@@ -61,6 +61,29 @@ function toast(msg, ms = 3200) {
   toast._t = setTimeout(() => t.classList.remove('show'), ms);
 }
 
+// In-page replacement for confirm()/prompt(), which some hosts block.
+function ask({ message, input = null, ok = 'OK', danger = false }) {
+  return new Promise(resolve => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'ask';
+    dlg.innerHTML = `<form method="dialog" class="ask-body">
+      <p>${esc(message)}</p>
+      ${input !== null ? `<input id="ask-input" value="${esc(input)}" autocomplete="off" spellcheck="false">` : ''}
+      <div class="btn-row"><span class="spacer"></span>
+        <button class="btn ghost" value="cancel">Cancel</button>
+        <button class="btn ${danger ? 'danger' : ''}" value="ok">${esc(ok)}</button></div></form>`;
+    document.body.appendChild(dlg);
+    const field = dlg.querySelector('input');
+    dlg.addEventListener('close', () => {
+      const yes = dlg.returnValue === 'ok';
+      dlg.remove();
+      resolve(input !== null ? (yes ? field.value : null) : yes);
+    });
+    dlg.showModal();
+    if (field) { field.focus(); field.select(); }
+  });
+}
+
 // ---------------------------------------------------------------- templates
 const T = (rows) => rows.map(r => `<p><b>${r}:</b> </p>`).join('');
 const TEMPLATES = {
@@ -488,12 +511,12 @@ function renderTrash() {
       : '<div class="empty-board"><p class="pixel">Swept clean.</p><p>Items you trash land here until you delete them for good.</p></div>'}
   </div>`;
   view.querySelectorAll('[data-restore]').forEach(b => b.onclick = () => { store.restore(b.closest('li').dataset.id); renderAll(); });
-  view.querySelectorAll('[data-purge]').forEach(b => b.onclick = () => {
+  view.querySelectorAll('[data-purge]').forEach(b => b.onclick = async () => {
     const id = b.closest('li').dataset.id;
-    if (confirm(`Delete “${store.get(id).title}” and everything inside it permanently?`)) { store.purge(id); renderAll(); }
+    if (await ask({ message: `Delete “${store.get(id).title}” and everything inside it permanently?`, ok: 'Delete forever', danger: true })) { store.purge(id); renderAll(); }
   });
-  view.querySelector('[data-empty]')?.addEventListener('click', () => {
-    if (confirm('Permanently delete everything in the Trash?')) { list.forEach(i => store.get(i.id) && store.purge(i.id)); renderAll(); }
+  view.querySelector('[data-empty]')?.addEventListener('click', async () => {
+    if (await ask({ message: 'Permanently delete everything in the Trash?', ok: 'Empty Trash', danger: true })) { list.forEach(i => store.get(i.id) && store.purge(i.id)); renderAll(); }
   });
 }
 
@@ -532,19 +555,19 @@ function renderInspector() {
       if (f === 'target' || f === 'status') { renderInspectorSoon(); if (app.classList.contains('mode-board')) renderView(); }
     });
   });
-  inspector.querySelector('[data-snap]')?.addEventListener('click', () => {
+  inspector.querySelector('[data-snap]')?.addEventListener('click', async () => {
     editor?.flush();
-    const cur = store.get(it.id);
-    const note = prompt('Name this snapshot (optional):', '') ?? null;
+    const note = await ask({ message: 'Name this snapshot (optional):', input: '', ok: 'Save snapshot' });
     if (note === null) return;
+    const cur = store.get(it.id);
     store.update(it.id, { snapshots: [...(cur.snapshots || []), { at: Date.now(), note, content: cur.content }].slice(-12) });
     renderInspector();
     toast('Snapshot saved.');
   });
-  inspector.querySelectorAll('[data-restore-snap]').forEach(b => b.onclick = () => {
+  inspector.querySelectorAll('[data-restore-snap]').forEach(b => b.onclick = async () => {
     const cur = store.get(it.id);
     const snap = cur.snapshots[+b.dataset.restoreSnap];
-    if (!snap || !confirm('Replace the current text with this snapshot? (The current text is snapshotted first.)')) return;
+    if (!snap || !(await ask({ message: 'Replace the current text with this snapshot? The current text is snapshotted first.', ok: 'Restore' }))) return;
     editor?.flush();
     const fresh = store.get(it.id);
     store.update(it.id, {
@@ -728,6 +751,7 @@ function openSettings(section) {
     <div class="dlg-scroll">
     <section id="sec-sync">
       <h3>Sync across devices</h3>
+      ${window.FAULKNER_PREVIEW ? '<p class="preview-note">This is a preview. It can’t reach GitHub, so sync, file downloads and app install only work once Faulkner is published on its own website. Everything you write here is still saved in this browser.</p>' : ''}
       <p class="muted">Your writing is always saved on this device first. To use it on your phone and other computers, Faulkner keeps a copy in a <b>private GitHub repository</b> that you own. It needs no server and no subscription.</p>
       <details ${cfg.token ? '' : 'open'}><summary>One-time setup (about 3 minutes)</summary>
         <ol class="steps">
@@ -819,15 +843,15 @@ function openSettings(section) {
         msg.className = 'sync-msg error';
       }
     } else if (act === 'disconnect') {
-      if (confirm('Stop syncing on this device? Your writing stays here and in the vault.')) { sync.setConfig(null); openSettings('sync'); }
+      if (await ask({ message: 'Stop syncing on this device? Your writing stays here and in the vault.', ok: 'Disconnect', danger: true })) { sync.setConfig(null); openSettings('sync'); }
     } else if (act === 'copy') {
       const code = sync.encodeSetupCode(sync.getConfig());
       try { await navigator.clipboard.writeText(code); toast('Setup code copied. Paste it into Faulkner on your other device.'); }
-      catch { prompt('Copy this setup code:', code); }
+      catch { await ask({ message: 'Copy this setup code and paste it on your other device:', input: code, ok: 'Done' }); }
     } else if (act === 'paste') {
       let code = '';
       try { code = await navigator.clipboard.readText(); } catch { /* fall through */ }
-      if (!code || !code.startsWith('FAULKNER1:')) code = prompt('Paste your setup code:') || '';
+      if (!code || !code.startsWith('FAULKNER1:')) code = (await ask({ message: 'Paste your setup code:', input: '', ok: 'Use code' })) || '';
       try {
         const c = sync.decodeSetupCode(code);
         form.owner.value = c.owner; form.repo.value = c.repo; form.token.value = c.token;
@@ -900,8 +924,10 @@ $('#sync-status').onclick = () => {
 // ---------------------------------------------------------------- chrome
 function applySettings() {
   const root = document.documentElement;
-  const theme = settings.theme === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'tidepool' : 'driftwood') : settings.theme;
-  root.dataset.theme = theme;
+  const host = root.dataset.theme; // set by an embedding page (e.g. a preview host), if any
+  const dark = host === 'dark' || (host !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+  const theme = settings.theme === 'auto' ? (dark ? 'tidepool' : 'driftwood') : settings.theme;
+  root.dataset.skin = theme;
   root.style.setProperty('--editor-font', FONTS[settings.font] || FONTS.courier);
   root.style.setProperty('--editor-size', settings.fontSize + 'px');
   root.style.setProperty('--page-width', settings.width + 'px');
@@ -919,6 +945,7 @@ function applySettings() {
   renderStatus();
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applySettings);
+new MutationObserver(applySettings).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
 function openBinder() { app.classList.add('binder-open'); }
 function closeDrawers() { app.classList.remove('binder-open', 'insp-open'); }
