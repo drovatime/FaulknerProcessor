@@ -297,6 +297,7 @@ input[type=range] { accent-color: var(--accent); }
 }
 .page p { margin: 0; }
 .page p + p { text-indent: 2em; }
+.para-spaced .sheet:not(.is-note) .page p { text-indent: 0; margin: 0 0 .9em; }
 .page h1, .page h2, .page h3 { font-size: 1.2em; text-align: center; margin: 1.2em 0 .8em; letter-spacing: .04em; }
 .page h2 + p, .page hr + p, .page blockquote + p { text-indent: 0; }
 .page blockquote { margin: 1em 2em; font-style: italic; }

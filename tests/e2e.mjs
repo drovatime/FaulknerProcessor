@@ -301,6 +301,26 @@ await B.screenshot({ path: `${OUT}/15-phone-compile.png` });
 await B.click('[data-tab=opts]');
 await B.screenshot({ path: `${OUT}/16-phone-compile-options.png` });
 
+// ---- Auto-indent survives mobile-style markup (bare text / <div> lines)
+await A.click('#compile [data-c=close]');
+await A.evaluate(() => { const d = window.carver.store.allItems().find(i => i.title === 'Opening Scene'); window.carver.select(d.id); });
+await A.waitForSelector('#page');
+await A.evaluate(() => {
+  const page = document.querySelector('#page');
+  page.innerHTML = 'A bare first line<div>a div line</div>';
+  page.focus();
+  const r = document.createRange(); r.setStart(page.firstChild, page.firstChild.data.length); r.collapse(true);
+  getSelection().removeAllRanges(); getSelection().addRange(r);
+});
+await A.keyboard.press('Enter');
+await A.keyboard.type('Typed after Enter');
+const shape = await A.evaluate(() => {
+  const page = document.querySelector('#page');
+  return { html: page.innerHTML, tags: [...page.childNodes].map(n => n.nodeName), indents: [...page.children].map(c => getComputedStyle(c).textIndent), text: page.innerText };
+});
+check(shape.tags.every(t => t === 'P') && shape.indents[0] === '0px' && shape.indents.slice(1).every(v => parseFloat(v) > 0) && /A bare first line\n+Typed after Enter/.test(shape.text),
+  `every line becomes an indented paragraph (${shape.html})`);
+
 check(errors.length === 0, 'no page errors' + (errors.length ? ':\n  ' + errors.join('\n  ') : ''));
 console.log(`GitHub API calls: ${gh.calls}`);
 await browser.close();

@@ -14,7 +14,7 @@ import { pdfjs } from './vendor.js';
 const SETTINGS_KEY = 'faulkner.settings';
 const DEFAULTS = {
   theme: 'auto', font: 'courier', fontSize: 19, width: 680,
-  typewriter: true, smartQuotes: true, sounds: true, volume: 0.45,
+  typewriter: true, paragraphs: 'indent', smartQuotes: true, sounds: true, volume: 0.45,
   scene: true, sceneTime: 'auto', weather: 'auto', body: 'seafoam', motion: true,
   dailyGoal: 500,
 };
@@ -871,6 +871,7 @@ function openSettings(section) {
         <label class="field"><span>Daily word goal</span><input name="dailyGoal" type="number" min="0" step="50" value="${settings.dailyGoal}"></label>
       </div>
       <label class="check"><input type="checkbox" name="typewriter" ${settings.typewriter ? 'checked' : ''}> Typewriter scrolling (keeps your line centered)</label>
+      <label class="field"><span>New paragraphs</span><select name="paragraphs">${opt('indent', 'Indent automatically (like a novel)', settings.paragraphs)}${opt('spaced', 'Blank line between, no indent', settings.paragraphs)}</select></label>
       <label class="check"><input type="checkbox" name="smartQuotes" ${settings.smartQuotes ? 'checked' : ''}> Smart quotes, em dashes (--) and ellipses (...)</label>
       <label class="check"><input type="checkbox" name="sounds" ${settings.sounds ? 'checked' : ''}> Typewriter sounds</label>
       <label class="field"><span>Sound volume</span><input name="volume" type="range" min="0" max="1" step="0.05" value="${settings.volume}"></label>
@@ -1020,6 +1021,7 @@ function applySettings() {
   root.style.setProperty('--page-width', settings.width + 'px');
   document.querySelector('meta[name="theme-color"]').content = getComputedStyle(root).getPropertyValue('--chrome').trim() || '#1c2b2d';
   app.classList.toggle('no-scene', !settings.scene);
+  app.classList.toggle('para-spaced', settings.paragraphs === 'spaced');
   $('#toolbar [data-cmd="typewriter"]').classList.toggle('on', settings.typewriter);
   sound.setVolume(settings.volume);
   const [b, hi, lo] = BODIES[settings.body] || BODIES.seafoam;

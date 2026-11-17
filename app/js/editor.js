@@ -26,6 +26,7 @@ export function sanitize(html) {
   return doc.body.innerHTML;
 }
 
+const BLOCK = /^(P|H1|H2|H3|BLOCKQUOTE|HR|UL|OL)$/;
 const escapeHtml = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 export function textToHtml(text) {
@@ -50,6 +51,7 @@ export function mountEditor(page, item, { settings, onKey, onWords }) {
 
   page.innerHTML = sanitize(item.content) || '<p><br></p>';
   page.contentEditable = 'true';
+  normalize();
   page.spellcheck = true;
   try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch { /* old browsers */ }
 
@@ -130,7 +132,89 @@ export function mountEditor(page, item, { settings, onKey, onWords }) {
     }
   }
 
-  function onInput() {
+  // Keep every line of text inside a real paragraph. Mobile browsers (iOS Safari in
+  // particular) sometimes create <div>s or leave bare text at the top level when you
+  // press Enter, which would lose the automatic first-line indent.
+  function normalize() {
+    const sel = getSelection();
+    const r = sel.rangeCount ? sel.getRangeAt(0) : null;
+    const saved = r && page.contains(r.startContainer) ? { node: r.startContainer, offset: r.startOffset } : null;
+    const swapped = new Map();
+    let run = null, changed = false;
+    for (const node of [...page.childNodes]) {
+      if (node.nodeType === 1 && node.tagName === 'DIV') {
+        run = null;
+        if (node.querySelector('p,div,h1,h2,h3,blockquote,ul,ol,hr')) continue;
+        const p = document.createElement('p');
+        while (node.firstChild) p.appendChild(node.firstChild);
+        if (!p.firstChild) p.appendChild(document.createElement('br'));
+        node.replaceWith(p);
+        swapped.set(node, p);
+        changed = true;
+        continue;
+      }
+      if (node.nodeType === 1 && BLOCK.test(node.tagName)) { run = null; continue; }
+      if (node.nodeType === 3 && !node.data.trim() && !run) { if (!node.data) node.remove(); continue; }
+      if (node.nodeType !== 1 && node.nodeType !== 3) continue;
+      if (!run) { run = document.createElement('p'); page.insertBefore(run, node); }
+      run.appendChild(node);
+      changed = true;
+    }
+    // Lift any line that ended up nested inside a paragraph out into its own paragraph.
+    for (const p of [...page.children]) {
+      if (p.tagName !== 'P' || !p.querySelector(':scope > div, :scope > p')) continue;
+      let cur = document.createElement('p');
+      const out = [cur];
+      for (const k of [...p.childNodes]) {
+        if (k.nodeType === 1 && (k.tagName === 'DIV' || k.tagName === 'P')) {
+          const np = document.createElement('p');
+          while (k.firstChild) np.appendChild(k.firstChild);
+          swapped.set(k, np);
+          out.push(np);
+          cur = document.createElement('p');
+          out.push(cur);
+        } else cur.appendChild(k);
+      }
+      for (const q of out) {
+        const last = q.lastChild;
+        if (last && last.nodeName === 'BR' && q.childNodes.length > 1) last.remove();
+      }
+      const keep = out.filter(q => q.childNodes.length);
+      p.replaceWith(...(keep.length ? keep : [Object.assign(document.createElement('p'), { innerHTML: '<br>' })]));
+      swapped.set(p, keep[0] || page.firstChild);
+      changed = true;
+    }
+    if (!page.firstChild) { page.innerHTML = '<p><br></p>'; changed = true; }
+    if (changed && saved) {
+      let { node, offset } = saved;
+      if (swapped.has(node)) node = swapped.get(node);
+      if (!page.contains(node) || node === page) { node = page.lastElementChild; offset = node.childNodes.length; }
+      try {
+        const nr = document.createRange();
+        nr.setStart(node, Math.min(offset, node.nodeType === 3 ? node.data.length : node.childNodes.length));
+        nr.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(nr);
+      } catch { /* leave the caret where the browser put it */ }
+    }
+  }
+
+  // When an empty page is focused, put the caret inside the first paragraph.
+  function onFocus() {
+    if (page.childNodes.length === 1 && page.firstChild.nodeName === 'P' && !page.textContent) {
+      const sel = getSelection();
+      if (sel.rangeCount && sel.getRangeAt(0).startContainer === page) {
+        const nr = document.createRange();
+        nr.setStart(page.firstChild, 0);
+        nr.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(nr);
+      }
+    }
+  }
+
+  function onInput(e) {
+    if (!e || !e.isComposing) normalize();
     scheduleSave();
     requestAnimationFrame(typewriterScroll);
   }
@@ -155,6 +239,7 @@ export function mountEditor(page, item, { settings, onKey, onWords }) {
   page.addEventListener('paste', onPaste);
   page.addEventListener('keydown', onKeydown);
   page.addEventListener('click', () => requestAnimationFrame(typewriterScroll));
+  page.addEventListener('focus', onFocus);
   page.addEventListener('blur', save);
 
   return {
@@ -163,6 +248,7 @@ export function mountEditor(page, item, { settings, onKey, onWords }) {
       if ((next.content || '') === lastSaved) return;
       if (saveTimer) return; // user is typing; their version will be saved & synced
       page.innerHTML = sanitize(next.content) || '<p><br></p>';
+      normalize();
       lastSaved = next.content || '';
       baseWords = store.wordsOf(next);
     },
