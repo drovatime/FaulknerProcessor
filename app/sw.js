@@ -1,8 +1,10 @@
-// Offline support: the app shell is cached so Faulkner opens without a connection.
-const VERSION = 'faulkner-v1';
+// Offline support: the app shell is cached so Carver opens without a connection.
+const VERSION = 'carver-v2';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/main.js', 'js/store.js', 'js/db.js', 'js/sync.js', 'js/editor.js', 'js/scene.js', 'js/sound.js', 'js/icons.js',
+  'js/compile.js', 'js/importer.js', 'js/files.js', 'js/vendor.js',
+  'vendor/jszip.min.js', 'vendor/mammoth.browser.min.js', 'vendor/pdf.min.js', 'vendor/pdf.worker.min.js',
   'icons/icon.svg', 'icons/icon-192.png',
 ];
 

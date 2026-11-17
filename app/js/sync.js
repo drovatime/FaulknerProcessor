@@ -3,8 +3,10 @@
 // resolve conflicts, then push all local changes as a single commit.
 import * as store from './store.js';
 import { db } from './db.js';
+import * as files from './files.js';
 
 const API = 'https://api.github.com';
+// Storage keys keep the app's original 'faulkner' prefix so existing data stays put.
 const CONFIG_KEY = 'faulkner.sync';
 
 const state = {
@@ -43,10 +45,10 @@ export const isConfigured = () => {
 };
 
 export function encodeSetupCode(cfg) {
-  return 'FAULKNER1:' + btoa(unescape(encodeURIComponent(JSON.stringify({ o: cfg.owner, r: cfg.repo, t: cfg.token }))));
+  return 'CARVER1:' + btoa(unescape(encodeURIComponent(JSON.stringify({ o: cfg.owner, r: cfg.repo, t: cfg.token }))));
 }
 export function decodeSetupCode(code) {
-  const raw = code.trim().replace(/^FAULKNER1:/, '');
+  const raw = code.trim().replace(/^(CARVER1|FAULKNER1):/, '');
   const o = JSON.parse(decodeURIComponent(escape(atob(raw))));
   return { owner: o.o, repo: o.r, token: o.t };
 }
@@ -110,10 +112,10 @@ async function ensureBranch(cfg) {
   } catch (e) {
     if (e.status !== 409 && e.status !== 404) throw e;
     // Empty repository: create a first commit so the Git Data API works.
-    const readme = '# Faulkner vault\n\nThis private repository stores writing synced by Faulkner.\nEach file in `items/` is one binder item. Please don\'t edit by hand.\n';
+    const readme = '# Carver vault\n\nThis private repository stores writing synced by Carver.\nEach file in `items/` is one binder item. Please don\'t edit by hand.\n';
     await gh(cfg, '/contents/README.md', {
       method: 'PUT',
-      body: { message: 'Initialize Faulkner vault', content: btoa(readme), branch: cfg.branch },
+      body: { message: 'Initialize Carver vault', content: btoa(readme), branch: cfg.branch },
     });
     const ref = await gh(cfg, `/git/ref/heads/${encodeURIComponent(cfg.branch)}`);
     return ref.object.sha;
@@ -141,15 +143,20 @@ async function syncOnce(cfg, hooks) {
   let pulled = 0;
   const conflicts = [];
   const remote = new Map(); // id -> sha
+  const remoteFiles = new Set(); // attachment hashes stored in the vault
 
-  if (head !== lastHead) {
+  {
     const commit = await gh(cfg, `/git/commits/${head}`);
     const tree = await gh(cfg, `/git/trees/${commit.tree.sha}?recursive=1`);
     for (const e of tree.tree) {
       if (e.type !== 'blob') continue;
       const id = idFromPath(e.path);
       if (id) remote.set(id, e.sha);
+      else if (e.path.startsWith('files/')) remoteFiles.add(e.path.slice(6));
     }
+  }
+
+  if (head !== lastHead) {
 
     // Pull: new or changed remote items.
     const changed = [...remote].filter(([id, sha]) => {
@@ -189,8 +196,6 @@ async function syncOnce(cfg, hooks) {
         else store.setSha(it.id, null);
       }
     }
-  } else {
-    for (const it of store.rawItems()) if (it._sha) remote.set(it.id, it._sha);
   }
 
   // Push.
@@ -209,13 +214,26 @@ async function syncOnce(cfg, hooks) {
         results.push({ id: it.id, sha: await blobSha(text), rev: it._rev });
       }
     }
+    // Attachments: upload new ones, drop ones nothing points to any more.
+    const referenced = new Set(store.allItems().filter(i => i.type === 'file' && i.fileSha).map(i => i.fileSha));
+    for (const sha of referenced) {
+      if (remoteFiles.has(sha)) continue;
+      const rec = await files.getFile(sha);
+      if (!rec) continue;
+      const b64 = await files.blobToBase64(rec.blob);
+      await gh(cfg, '/git/blobs', { method: 'POST', body: { content: b64, encoding: 'base64' } });
+      entries.push({ path: `files/${sha}`, mode: '100644', type: 'blob', sha });
+    }
+    for (const sha of remoteFiles) {
+      if (!referenced.has(sha)) entries.push({ path: `files/${sha}`, mode: '100644', type: 'blob', sha: null });
+    }
     if (entries.length) {
       const commit = await gh(cfg, `/git/commits/${head}`);
       const tree = await gh(cfg, '/git/trees', { method: 'POST', body: { base_tree: commit.tree.sha, tree: entries } });
       const n = entries.length;
       const next = await gh(cfg, '/git/commits', {
         method: 'POST',
-        body: { message: `Faulkner: ${n} change${n === 1 ? '' : 's'} from ${deviceName()}`, tree: tree.sha, parents: [head] },
+        body: { message: `Carver: ${n} change${n === 1 ? '' : 's'} from ${deviceName()}`, tree: tree.sha, parents: [head] },
       });
       try {
         await gh(cfg, `/git/refs/heads/${encodeURIComponent(cfg.branch)}`, { method: 'PATCH', body: { sha: next.sha, force: false } });
@@ -267,6 +285,28 @@ export function sync(hooks = {}) {
     return result;
   })();
   return state.running;
+}
+
+// Download an attachment from the vault (used when a file was added on another device).
+const fetching = new Map();
+export function fetchFile(sha, mime) {
+  if (!isConfigured()) return Promise.resolve(null);
+  if (!fetching.has(sha)) {
+    fetching.set(sha, (async () => {
+      const blob = await gh(getConfig(), `/git/blobs/${sha}`);
+      const bytes = files.base64ToBytes(blob.content);
+      await files.putBytes(sha, bytes, mime);
+      return files.getFile(sha);
+    })().finally(() => fetching.delete(sha)));
+  }
+  return fetching.get(sha);
+}
+export async function fetchMissingFiles() {
+  for (const it of store.allItems()) {
+    if (it.type !== 'file' || !it.fileSha) continue;
+    if (await files.hasFile(it.fileSha)) continue;
+    try { await fetchFile(it.fileSha, it.mime); } catch (e) { console.warn('could not fetch attachment', e); }
+  }
 }
 
 // Quick connectivity/permission check used by the settings dialog.

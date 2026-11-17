@@ -28,7 +28,7 @@ const BASE = `http://127.0.0.1:${server.address().port}/`;
 
 // ---- mock GitHub (Git Data API subset)
 const sha1 = s => crypto.createHash('sha1').update(s).digest('hex');
-const gitBlobSha = s => { const b = Buffer.from(s, 'utf8'); return sha1(Buffer.concat([Buffer.from(`blob ${b.length}\0`), b])); };
+const gitBlobSha = s => { const b = Buffer.isBuffer(s) ? s : Buffer.from(s, 'utf8'); return sha1(Buffer.concat([Buffer.from(`blob ${b.length}\0`), b])); };
 const gh = { blobs: new Map(), trees: new Map(), commits: new Map(), ref: null, calls: 0 };
 function putTree(entries) { const s = sha1(JSON.stringify([...entries].sort((a, b) => a.path.localeCompare(b.path)))); gh.trees.set(s, entries); return s; }
 
@@ -47,7 +47,7 @@ async function handle(route) {
   if (p === '/git/ref/heads/main') return gh.ref ? json(200, { object: { sha: gh.ref } }) : json(409, { message: 'Git Repository is empty.' });
   if (p === '/contents/README.md' && method === 'PUT') {
     const text = Buffer.from(body.content, 'base64').toString('utf8');
-    const bs = gitBlobSha(text); gh.blobs.set(bs, text);
+    const bs = gitBlobSha(text); gh.blobs.set(bs, Buffer.from(text));
     const t = putTree([{ path: 'README.md', sha: bs }]);
     const c = sha1('c' + t + Date.now()); gh.commits.set(c, { tree: t, parents: [] }); gh.ref = c;
     return json(201, {});
@@ -58,12 +58,14 @@ async function handle(route) {
     const t = gh.trees.get(mm[1]);
     return json(200, { sha: mm[1], truncated: false, tree: t.map(e => ({ path: e.path, type: 'blob', mode: '100644', sha: e.sha })) });
   }
-  if ((mm = p.match(/^\/git\/blobs\/(\w+)$/))) return json(200, { content: Buffer.from(gh.blobs.get(mm[1]), 'utf8').toString('base64').replace(/(.{60})/g, '$1\n'), encoding: 'base64' });
+  if ((mm = p.match(/^\/git\/blobs\/(\w+)$/))) return json(200, { content: gh.blobs.get(mm[1]).toString('base64').replace(/(.{60})/g, '$1\n'), encoding: 'base64' });
+  if (p === '/git/blobs' && method === 'POST') { const b = Buffer.from(body.content, 'base64'); const bs = gitBlobSha(b); gh.blobs.set(bs, b); return json(201, { sha: bs }); }
   if (p === '/git/trees' && method === 'POST') {
     const map = new Map(gh.trees.get(body.base_tree).map(e => [e.path, e]));
     for (const e of body.tree) {
       if (e.sha === null) map.delete(e.path);
-      else { const bs = gitBlobSha(e.content); gh.blobs.set(bs, e.content); map.set(e.path, { path: e.path, sha: bs }); }
+      else if (e.content != null) { const bs = gitBlobSha(e.content); gh.blobs.set(bs, Buffer.from(e.content)); map.set(e.path, { path: e.path, sha: bs }); }
+      else { if (!gh.blobs.has(e.sha)) return json(422, { message: 'missing blob' }); map.set(e.path, { path: e.path, sha: e.sha }); }
     }
     return json(201, { sha: putTree([...map.values()]) });
   }
@@ -89,7 +91,7 @@ async function device(name, opts) {
   return page;
 }
 const check = (cond, msg) => { if (!cond) { console.error('FAIL:', msg); process.exitCode = 1; } else console.log('ok -', msg); };
-const remoteItems = () => { const t = gh.trees.get(gh.commits.get(gh.ref).tree); return t.filter(e => e.path.startsWith('items/')).map(e => JSON.parse(gh.blobs.get(e.sha))); };
+const remoteItems = () => { const t = gh.trees.get(gh.commits.get(gh.ref).tree); return t.filter(e => e.path.startsWith('items/')).map(e => JSON.parse(gh.blobs.get(e.sha).toString())); };
 
 async function connect(page) {
   await page.click('#btn-settings');
@@ -97,10 +99,10 @@ async function connect(page) {
   await page.fill('input[name=repo]', 'vault');
   await page.fill('input[name=token]', 'good-token');
   await page.click('[data-s=connect]');
-  await page.waitForFunction(() => window.faulkner.sync.getState().status === 'idle' && window.faulkner.sync.getState().lastSync > 0);
+  await page.waitForFunction(() => window.carver.sync.getState().status === 'idle' && window.carver.sync.getState().lastSync > 0);
   await page.click('dialog [value=close]');
 }
-const syncNow = page => page.evaluate(() => window.faulkner.runSync());
+const syncNow = page => page.evaluate(() => window.carver.runSync());
 
 // ---- Desktop: write something
 const A = await device('desktop', { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
@@ -140,7 +142,7 @@ await connect(B);
 await B.waitForSelector('.proj');
 check(await B.locator('.proj').count() === 1, 'phone pulled the project');
 await B.screenshot({ path: `${OUT}/5-phone-welcome.png` });
-await B.evaluate(id => window.faulkner.select(id), scene.id);
+await B.evaluate(id => window.carver.select(id), scene.id);
 await B.waitForSelector('#page');
 check((await B.locator('#page').innerText()).includes('bell buoy'), 'phone sees desktop text');
 await B.click('#page');
@@ -151,12 +153,12 @@ await B.waitForTimeout(600);
 await B.screenshot({ path: `${OUT}/6-phone-editor.png` });
 await syncNow(B);
 await syncNow(A);
-await A.evaluate(id => window.faulkner.select(id), scene.id);
+await A.evaluate(id => window.carver.select(id), scene.id);
 check((await A.locator('#page').innerText()).includes('one by one'), 'desktop received phone edit');
 
 // ---- Conflict: both edit same doc offline-ish
-await A.evaluate(id => window.faulkner.store.update(id, { content: '<p>Desktop version.</p>' }), scene.id);
-await B.evaluate(id => window.faulkner.store.update(id, { content: '<p>Phone version.</p>' }), scene.id);
+await A.evaluate(id => window.carver.store.update(id, { content: '<p>Desktop version.</p>' }), scene.id);
+await B.evaluate(id => window.carver.store.update(id, { content: '<p>Phone version.</p>' }), scene.id);
 await syncNow(A);
 await syncNow(B);
 await syncNow(A);
@@ -167,11 +169,11 @@ check(bodies.includes('Desktop version') && bodies.includes('Phone version'), 'b
 
 // ---- Delete propagates
 const noteId = remoteItems().find(i => i.title === 'Premise').id;
-await A.evaluate(id => { window.faulkner.store.trash(id); window.faulkner.store.purge(id); }, noteId);
+await A.evaluate(id => { window.carver.store.trash(id); window.carver.store.purge(id); }, noteId);
 await syncNow(A);
 await syncNow(B);
 check(!remoteItems().some(i => i.id === noteId), 'delete reached vault');
-check(await B.evaluate(id => !window.faulkner.store.get(id), noteId), 'delete reached phone');
+check(await B.evaluate(id => !window.carver.store.get(id), noteId), 'delete reached phone');
 
 // ---- Mobile binder drawer + settings + themes
 await B.click('#btn-binder');
@@ -189,13 +191,115 @@ await A.evaluate(() => { localStorage.setItem('faulkner.settings', JSON.stringif
 await A.reload(); await A.waitForSelector('#page');
 await A.screenshot({ path: `${OUT}/10-driftwood-day-fog.png` });
 
-// ---- Compile
-const [dl] = await Promise.all([A.waitForEvent('download'), A.evaluate(() => {
-  const p = window.faulkner.store.allItems().find(i => i.type === 'project');
-  window.faulkner.select(p.id);
-}).then(() => A.click('[data-compile]')).then(() => A.click('.menu button:nth-child(2)'))]);
-const md = fs.readFileSync(await dl.path(), 'utf8');
-check(md.startsWith('# Untitled Project') && md.includes('Chapter One'), 'compile to markdown');
+// ---- Uploads: markdown outline (split at headings), a PNG and a PDF
+const FIX = path.join(OUT, 'fixtures'); fs.mkdirSync(FIX, { recursive: true });
+fs.writeFileSync(path.join(FIX, 'Story Bible.md'), '# Mara Lund\n\nHarbor pilot. *Hates* fog.\n\n# Tillicum Bay\n\nA cold harbor town.\n\n- cannery\n- jetty\n');
+fs.copyFileSync(path.join(ROOT, 'icons', 'icon-192.png'), path.join(FIX, 'mood board.png'));
+function minimalPdf(text) {
+  const objs = ['<</Type/Catalog/Pages 2 0 R>>', '<</Type/Pages/Kids[3 0 R]/Count 1>>',
+    '<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 144]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>',
+    null, '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>'];
+  const stream = `BT /F1 18 Tf 30 70 Td (${text}) Tj ET`;
+  objs[3] = `<</Length ${stream.length}>>stream\n${stream}\nendstream`;
+  let out = '%PDF-1.4\n'; const offs = [];
+  objs.forEach((o, i) => { offs.push(out.length); out += `${i + 1} 0 obj${o}endobj\n`; });
+  const x = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offs.map(o => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  out += `trailer<</Size ${objs.length + 1}/Root 1 0 R>>\nstartxref\n${x}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+fs.writeFileSync(path.join(FIX, 'research.pdf'), minimalPdf('Bell buoy log'));
+const notesId = await A.evaluate(() => window.carver.store.allItems().find(i => i.role === 'notes').id);
+await A.evaluate(id => window.carver.select(id), notesId);
+await A.waitForSelector('[data-upload]');
+const [chooser] = await Promise.all([A.waitForEvent('filechooser'), A.click('[data-upload]')]);
+await chooser.setFiles([path.join(FIX, 'Story Bible.md'), path.join(FIX, 'mood board.png'), path.join(FIX, 'research.pdf')]);
+await A.waitForSelector('dialog.ask');
+await A.click('dialog.ask button[value=ok]');
+await A.waitForFunction(() => window.carver.store.allItems().filter(i => i.type === 'file').length === 2);
+const up = await A.evaluate(() => window.carver.store.allItems().map(i => ({ t: i.title, type: i.type, c: i.content })));
+check(up.some(i => i.t === 'Mara Lund' && i.c.includes('<i>Hates</i>')) && up.some(i => i.t === 'Tillicum Bay' && i.c.includes('<li>jetty</li>')), 'markdown split into notes at headings');
+const pdfId = await A.evaluate(() => window.carver.store.allItems().find(i => i.title === 'research').id);
+await A.evaluate(id => window.carver.select(id), pdfId);
+await A.waitForSelector('.pdf-pages canvas');
+await A.waitForTimeout(400);
+await A.screenshot({ path: `${OUT}/11-pdf-attachment.png` });
+await A.click('[data-extract]');
+await A.waitForFunction(() => window.carver.store.allItems().some(i => i.title === 'research (text)' && i.content.includes('Bell buoy log')));
+check(true, 'PDF viewer renders and extracts text');
+await syncNow(A);
+const files = gh.trees.get(gh.commits.get(gh.ref).tree).filter(e => e.path.startsWith('files/'));
+check(files.length === 2, `attachments uploaded to vault (${files.length})`);
+await syncNow(B);
+const pngId = await B.evaluate(() => window.carver.store.allItems().find(i => i.title === 'mood board').id);
+await B.evaluate(id => window.carver.select(id), pngId);
+await B.waitForSelector('.file-img');
+check(await B.evaluate(() => document.querySelector('.file-img').naturalWidth) === 192, 'phone downloaded the image attachment');
+
+// ---- Compile: build a few chapters, then preview & export each format
+await A.evaluate(() => {
+  const s = window.carver.store;
+  const ms = s.allItems().find(i => i.role === 'manuscript');
+  const para = n => Array.from({ length: n }, (_, k) => `<p>${'The tide turned under the pilings and the town held its breath, the way it always did when the boats were late. '.repeat(3 + (k % 4))}<i>Not yet,</i> she thought.</p>`).join('');
+  for (let c = 2; c <= 4; c++) {
+    const f = s.create({ type: 'folder', parentId: ms.id, title: c === 3 ? 'The Cannery' : `Chapter ${c}` });
+    s.create({ type: 'doc', parentId: f.id, title: 'Scene A', content: para(14) });
+    s.create({ type: 'doc', parentId: f.id, title: 'Scene B', content: para(10) + '<hr>' + para(6) });
+  }
+  const p = s.allItems().find(i => i.type === 'project');
+  s.update(p.id, { title: 'The Bell Buoy' });
+  window.carver.select(p.id);
+});
+await A.waitForSelector('[data-compile]');
+await A.click('[data-compile]');
+await A.waitForFunction(() => /\d+ pages?/.test(document.querySelector('.cmp-info')?.textContent || ''));
+await A.fill('input[name="m.author"]', 'Harper Vale');
+await A.fill('textarea[name="m.contact"]', '12 Harbor Rd\nAstoria, OR 97103\nharper@example.com');
+await A.waitForTimeout(900);
+await A.waitForFunction(() => /\d+ pages?/.test(document.querySelector('.cmp-info')?.textContent || ''));
+const msInfo = await A.textContent('.cmp-info');
+await A.evaluate(() => document.querySelectorAll('#compile .cmp-wrap')[2].scrollIntoView());
+await A.screenshot({ path: `${OUT}/12-compile-manuscript.png` });
+const pageCheck = await A.evaluate(() => {
+  const pages = [...document.querySelectorAll('#compile .cmp-page')];
+  const over = pages.filter(p => { const b = p.querySelector('.cmp-body-box'); return b.scrollHeight > b.clientHeight + 1; }).length;
+  return { n: pages.length, over, head: pages[1]?.querySelector('.cmp-rh')?.textContent };
+});
+check(pageCheck.n > 5 && pageCheck.over === 0, `manuscript paginates without overflow (${msInfo})`);
+check(pageCheck.head === 'Vale / THE BELL BUOY / 1', `manuscript header: ${pageCheck.head}`);
+async function exportBytes(kind) {
+  const [d] = await Promise.all([A.waitForEvent('download'), A.click(`[data-export=${kind}]`)]);
+  const f = path.join(OUT, `export-${Date.now()}.${kind}`);
+  fs.copyFileSync(await d.path(), f);
+  return f;
+}
+const docx = await exportBytes('docx');
+await A.click('input[name=preset][value=kdp]');
+await A.waitForFunction(() => /KDP/.test(document.querySelector('.cmp-info')?.textContent || ''));
+const kdpInfo = await A.textContent('.cmp-info');
+check(/inside margin/.test(kdpInfo), `KDP gutter reported (${kdpInfo})`);
+await A.evaluate(() => document.querySelectorAll('#compile .cmp-spread')[3].scrollIntoView());
+await A.screenshot({ path: `${OUT}/13-compile-kdp.png` });
+const kdpDocx = await exportBytes('docx');
+await A.click('input[name=preset][value=ebook]');
+await A.waitForFunction(() => /pages?/.test(document.querySelector('.cmp-info')?.textContent || '') && document.querySelector('[data-export=epub]'));
+await A.waitForTimeout(300);
+const epub = await exportBytes('epub');
+await A.screenshot({ path: `${OUT}/14-compile-ebook.png` });
+await A.click('input[name=preset][value=reading]');
+await A.waitForSelector('[data-export=md]');
+const md = fs.readFileSync(await exportBytes('md'), 'utf8');
+check(md.startsWith('# The Bell Buoy') && md.includes('## Chapter Three: The Cannery'), 'markdown export');
+fs.writeFileSync(path.join(OUT, 'exports.json'), JSON.stringify({ docx, kdpDocx, epub }));
+
+// Phone compile view
+await syncNow(A); await syncNow(B);
+await B.evaluate(() => { const p = window.carver.store.allItems().find(i => i.type === 'project'); window.carver.select(p.id); });
+await B.click('[data-compile]');
+await B.waitForFunction(() => /\d+ pages?/.test(document.querySelector('.cmp-info')?.textContent || ''));
+await B.screenshot({ path: `${OUT}/15-phone-compile.png` });
+await B.click('[data-tab=opts]');
+await B.screenshot({ path: `${OUT}/16-phone-compile-options.png` });
 
 check(errors.length === 0, 'no page errors' + (errors.length ? ':\n  ' + errors.join('\n  ') : ''));
 console.log(`GitHub API calls: ${gh.calls}`);

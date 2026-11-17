@@ -1,6 +1,6 @@
 // Tiny IndexedDB wrapper. Everything lives on-device first; sync is layered on top.
-const DB_NAME = 'faulkner';
-const VERSION = 1;
+const DB_NAME = 'faulkner'; // original app name; kept so existing data stays put
+const VERSION = 2;
 let dbPromise;
 
 function open() {
@@ -11,6 +11,7 @@ function open() {
         const db = req.result;
         if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
+        if (!db.objectStoreNames.contains('files')) db.createObjectStore('files', { keyPath: 'sha' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -37,4 +38,7 @@ export const db = {
   delMany: ids => run('items', 'readwrite', s => { ids.forEach(id => s.delete(id)); }),
   getMeta: key => run('meta', 'readonly', s => s.get(key)),
   setMeta: (key, value) => run('meta', 'readwrite', s => { s.put(value, key); }),
+  getFile: sha => run('files', 'readonly', s => s.get(sha)),
+  putFile: rec => run('files', 'readwrite', s => { s.put(rec); }),
+  fileKeys: () => run('files', 'readonly', s => s.getAllKeys()),
 };

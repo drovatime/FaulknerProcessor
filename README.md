@@ -1,4 +1,4 @@
-# Faulkner
+# Carver
 
 A retro word processor for fiction, set in a writing cabin on the Pacific Northwest coast.
 It runs in any browser and installs like an app on your phone or desktop. It works offline and
@@ -20,8 +20,31 @@ syncs your writing between devices through a private GitHub repository that you 
 - **The inspector** shows the synopsis, status, label, word target, margin notes and **snapshots** (save a copy before a big
   revision and restore it later).
 - **Daily word goal**, project word counts, focus mode (`Ctrl/⌘+Shift+F`), and search across the binder.
-- **Compile** a manuscript to a print-ready `.html`, Markdown, or plain text file. You can also download a full backup.
+- **Compile & export with a live page preview.** Formats:
+  - **Manuscript submission** (standard Shunn format for agents and editors) → Word or PDF
+  - **KDP paperback** (5×8 to 6×9 trims; the gutter grows automatically with page count to meet KDP's minimums) → PDF or Word
+  - **Paperback for IngramSpark and other printers** and **Large print** → PDF or Word
+  - **eBook** for Kindle, Apple Books, Kobo and Google Play → EPUB
+  - **Reading copy** for beta readers → PDF, Word, Markdown or text
+
+  You can choose the typeface, size, line spacing, chapter heading style, scene-break marker, title and copyright pages,
+  a dedication, and which chapters to include.
+- **Uploads.** Drop files onto any folder, or use **Upload**. Word (`.docx`), Markdown, text and HTML files become editable
+  notes, and a file with several headings can be split into one note per heading. PDFs and images are kept as attachments
+  you can view in the app. They sync too, and you can copy a PDF's text into a note.
+- **Backup.** You can download a full backup of your binder.
 - **Three themes:** Driftwood (light), Foghorn (sepia) and Tidepool (dark).
+
+## Installing it as an app
+
+Once Carver is online (step 1 below), open its address on each device:
+
+- **iPhone / iPad:** in Safari, tap **Share → Add to Home Screen**.
+- **Android:** in Chrome, tap **⋮ → Install app**.
+- **Mac / Windows:** in Chrome or Edge, click the install icon at the right end of the address bar. On a Mac you can also use Safari's
+  **File → Add to Dock**.
+
+It then opens full-screen with its own icon, and it works offline.
 
 ## 1. Put it online (once)
 
@@ -35,11 +58,11 @@ point them at the `app/` folder.)
 
 ## 2. Turn on sync (once)
 
-1. Create a new **private** GitHub repo, e.g. `faulkner-vault`. Leave it empty.
+1. Create a new **private** GitHub repo, e.g. `carver-vault`. Leave it empty.
 2. Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new):
-   for *Repository access*, choose *Only select repositories* → `faulkner-vault`. For *Repository permissions*, set
+   for *Repository access*, choose *Only select repositories* → `carver-vault`. For *Repository permissions*, set
    **Contents: Read and write**. Choose a long expiration.
-3. In Faulkner, open ⚙ **Settings → Sync across devices**. Enter your username, `faulkner-vault` and the token,
+3. In Carver, open ⚙ **Settings → Sync across devices**. Enter your username, `carver-vault` and the token,
    then press **Connect**.
 4. On your other devices, open the site and **Add to Home Screen / Install**. Then either enter the same three
    values, or use **Copy setup code** on the first device and **Paste setup code** on the new one.
@@ -60,3 +83,5 @@ point them at the `app/` folder.)
 cd app && python3 -m http.server 8080   # then open http://localhost:8080
 node tests/e2e.mjs                      # two-device sync test against a mocked GitHub API (needs Playwright)
 ```
+
+Bundled libraries (Word import, zip/EPUB, PDF viewing) are in `app/vendor/`, with their licenses listed in `app/vendor/LICENSES.md`.

@@ -5,6 +5,10 @@ import { icon, hydrateIcons } from './icons.js';
 import { createScene } from './scene.js';
 import { mountEditor, sanitize } from './editor.js';
 import * as sound from './sound.js';
+import { openCompile } from './compile.js';
+import * as importer from './importer.js';
+import * as files from './files.js';
+import { pdfjs } from './vendor.js';
 
 // ---------------------------------------------------------------- settings
 const SETTINGS_KEY = 'faulkner.settings';
@@ -62,7 +66,7 @@ function toast(msg, ms = 3200) {
 }
 
 // In-page replacement for confirm()/prompt(), which some hosts block.
-function ask({ message, input = null, ok = 'OK', danger = false }) {
+function ask({ message, input = null, ok = 'OK', cancel = 'Cancel', danger = false }) {
   return new Promise(resolve => {
     const dlg = document.createElement('dialog');
     dlg.className = 'ask';
@@ -70,7 +74,7 @@ function ask({ message, input = null, ok = 'OK', danger = false }) {
       <p>${esc(message)}</p>
       ${input !== null ? `<input id="ask-input" value="${esc(input)}" autocomplete="off" spellcheck="false">` : ''}
       <div class="btn-row"><span class="spacer"></span>
-        <button class="btn ghost" value="cancel">Cancel</button>
+        <button class="btn ghost" value="cancel">${esc(cancel)}</button>
         <button class="btn ${danger ? 'danger' : ''}" value="ok">${esc(ok)}</button></div></form>`;
     document.body.appendChild(dlg);
     const field = dlg.querySelector('input');
@@ -96,6 +100,7 @@ function iconFor(it) {
   if (it.type === 'project') return 'book';
   if (it.type === 'folder') return it.role && ROLE_INFO[it.role] ? ROLE_INFO[it.role].icon : (expanded.has(it.id) ? 'folderOpen' : 'folder');
   if (it.type === 'note') return 'note';
+  if (it.type === 'file') return files.fileKind(it.mime) === 'image' ? 'image' : 'clip';
   return 'doc';
 }
 
@@ -313,7 +318,8 @@ function itemMenu(id, x, y) {
   }
   if (container) {
     entries.push('-');
-    entries.push({ label: 'Compile to file…', action: () => compileMenu(id, x, y) });
+    entries.push({ label: 'Upload files here…', icon: 'clip', action: () => pickFiles(id) });
+    entries.push({ label: 'Compile & export…', action: () => compileMenu(id) });
   }
   entries.push('-');
   entries.push({ label: 'Move to Trash', icon: 'trash', danger: true, action: () => { store.trash(id); if (selected === id || store.isHidden(selected)) select(it.parentId || null); else renderAll(); toast(`“${it.title}” moved to Trash.`); } });
@@ -361,7 +367,7 @@ function renderCrumbs() {
 $('#crumbs').addEventListener('click', e => { const a = e.target.closest('a[data-id]'); if (a) { e.preventDefault(); select(a.dataset.id); } });
 
 function renderView() {
-  app.classList.remove('mode-editor', 'mode-board', 'mode-welcome', 'mode-trash');
+  app.classList.remove('mode-editor', 'mode-board', 'mode-welcome', 'mode-trash', 'mode-file');
   if (selected === 'trash') return renderTrash();
   const it = store.get(selected);
   if (!it || store.isHidden(selected)) {
@@ -369,6 +375,7 @@ function renderView() {
     return renderWelcome();
   }
   if (isContainer(it)) return renderBoard(it);
+  if (it.type === 'file') return renderFile(it);
   return renderEditor(it);
 }
 
@@ -377,7 +384,7 @@ function renderWelcome() {
   const projects = store.children(null).filter(p => p.type === 'project');
   view.innerHTML = `<div class="scroller"><div class="welcome">
     <h1 class="pixel">The tide is out.<br>The page is blank.</h1>
-    <p>Faulkner keeps your fiction, notes and outlines in one binder, saves every keystroke on this device, and syncs to your other devices when you connect a GitHub vault.</p>
+    <p>Carver keeps your fiction, notes and outlines in one binder, saves every keystroke on this device, and syncs to your other devices when you connect a GitHub vault.</p>
     <div class="welcome-actions">
       <button class="btn big" data-w="new">${icon('plus')} Start a new project</button>
       ${!sync.isConfigured() ? `<button class="btn ghost big" data-w="sync">${icon('gear')} Connect sync</button>` : ''}
@@ -436,6 +443,7 @@ function renderBoard(it) {
       </div>
       <button class="btn" data-add="auto">${icon('plus')} New</button>
       <button class="btn ghost" data-add="folder">${icon('folder')} Folder</button>
+      <button class="btn ghost" data-upload title="Add Word, text, Markdown, PDF or image files">${icon('clip')} Upload</button>
       <button class="btn ghost" data-compile>Compile</button>
     </div>`;
   let body;
@@ -473,7 +481,8 @@ function renderBoard(it) {
   bt.addEventListener('change', () => { store.update(it.id, { title: bt.value || 'Untitled' }); renderBinder(); renderCrumbs(); });
   view.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { setViewMode(it.id, b.dataset.mode); renderView(); });
   view.querySelectorAll('[data-add]').forEach(b => b.onclick = () => newChild(it.id, b.dataset.add === 'folder' ? 'folder' : undefined));
-  view.querySelector('[data-compile]').onclick = e => { const r = e.target.getBoundingClientRect(); compileMenu(it.id, r.right, r.bottom); };
+  view.querySelector('[data-compile]').onclick = () => compileMenu(it.id);
+  view.querySelector('[data-upload]').onclick = () => pickFiles(it.id);
   view.querySelectorAll('[data-field]').forEach(inp => {
     const id = inp.closest('[data-id]').dataset.id;
     const field = inp.dataset.field;
@@ -520,6 +529,171 @@ function renderTrash() {
   });
 }
 
+function inManuscript(it) {
+  return (it.type === 'doc' || it.type === 'folder') && store.roleOf(it.id) === 'manuscript' && it.role !== 'manuscript';
+}
+
+// ---------------------------------------------------------------- uploads & attachments
+const MAX_FILE = 50 * 1024 * 1024;
+function pickFiles(parentId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  input.accept = '.docx,.txt,.md,.markdown,.html,.htm,.fountain,.pdf,image/*,.rtf,.csv,.odt,.pages,audio/*';
+  input.onchange = () => { if (input.files.length) uploadFiles([...input.files], parentId); };
+  input.click();
+}
+
+async function uploadFiles(list, parentId) {
+  const parent = store.get(parentId);
+  if (parent && !isContainer(parent)) parentId = parent.parentId;
+  const role = parentId ? store.roleOf(parentId) : null;
+  let made = 0, firstId = null;
+  toast(`Adding ${list.length} file${list.length === 1 ? '' : 's'}…`, 1500);
+  for (const file of list) {
+    try {
+      if (importer.isConvertible(file.name)) {
+        const html = await importer.convert(file);
+        const type = role === 'manuscript' ? 'doc' : 'note';
+        const n = importer.headingCount(html);
+        let split = false;
+        if (n >= 2) split = await ask({ message: `“${file.name}” has ${n} headings. Split it into ${n} separate ${type === 'doc' ? 'scenes' : 'notes'}, one per heading, inside a folder?`, ok: `Split into ${n}`, cancel: 'Keep as one' });
+        if (split) {
+          const folder = store.create({ type: 'folder', parentId, title: importer.baseName(file.name) });
+          for (const part of importer.splitAtHeadings(html)) store.create({ type, parentId: folder.id, title: part.title || 'Introduction', content: part.html });
+          expanded.add(folder.id);
+          firstId = firstId || folder.id;
+        } else {
+          const it = store.create({ type, parentId, title: importer.baseName(file.name), content: html });
+          firstId = firstId || it.id;
+        }
+      } else {
+        if (file.size > MAX_FILE) { toast(`“${file.name}” is over 50 MB, too large to sync. Skipped.`, 5000); continue; }
+        const rec = await files.saveFile(file);
+        const it = store.create({ type: 'file', parentId, title: importer.baseName(file.name), fileName: file.name, mime: rec.mime, size: rec.size, fileSha: rec.sha });
+        firstId = firstId || it.id;
+      }
+      made++;
+    } catch (e) {
+      console.error(e);
+      toast(`Couldn’t read “${file.name}”: ${e.message}`, 5000);
+    }
+  }
+  if (parentId) { expanded.add(parentId); saveExpanded(); }
+  if (made) {
+    toast(`Added ${made} file${made === 1 ? '' : 's'}.`);
+    if (made === 1 && firstId) select(firstId); else renderAll();
+  }
+}
+
+// Drop files from the desktop onto the board or a binder folder.
+function acceptFileDrops(el, targetOf) {
+  el.addEventListener('dragover', e => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); el.classList.add('file-drop'); } });
+  el.addEventListener('dragleave', e => { if (e.target === el) el.classList.remove('file-drop'); });
+  el.addEventListener('drop', e => {
+    if (!e.dataTransfer?.files?.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    el.classList.remove('file-drop');
+    uploadFiles([...e.dataTransfer.files], targetOf(e));
+  });
+}
+acceptFileDrops(view, () => {
+  const it = store.get(selected);
+  return it ? (isContainer(it) ? it.id : it.parentId) : null;
+});
+acceptFileDrops(tree, e => {
+  const row = e.target.closest('.row');
+  const it = row && store.get(row.dataset.id);
+  return it ? (isContainer(it) ? it.id : it.parentId) : (store.get(selected)?.parentId ?? null);
+});
+
+let fileUrl = null;
+async function renderFile(it) {
+  app.classList.add('mode-file');
+  if (fileUrl) { URL.revokeObjectURL(fileUrl); fileUrl = null; }
+  const kind = files.fileKind(it.mime);
+  view.innerHTML = `<div class="scroller file-view">
+    <div class="board-head">
+      <input class="board-title" value="${esc(it.title)}" aria-label="Title">
+      <span class="board-meta">${esc(it.fileName || '')} · ${files.humanSize(it.size || 0)}</span>
+      <span class="spacer"></span>
+      ${kind === 'pdf' ? `<button class="btn ghost" data-extract>${icon('note')} Copy text into a note</button>` : ''}
+      <button class="btn ghost" data-dl>${icon('down')} Download</button>
+    </div>
+    <div class="file-body"><p class="muted file-loading">Opening…</p></div>
+  </div>`;
+  const title = view.querySelector('.board-title');
+  title.addEventListener('change', () => { store.update(it.id, { title: title.value || 'Untitled' }); renderBinder(); renderCrumbs(); });
+  const bodyEl = view.querySelector('.file-body');
+  let rec = await files.getFile(it.fileSha);
+  if (!rec && sync.isConfigured()) {
+    bodyEl.innerHTML = '<p class="muted file-missing">Downloading from your vault…</p>';
+    try { rec = await sync.fetchFile(it.fileSha, it.mime); } catch { /* handled below */ }
+  }
+  if (selected !== it.id) return;
+  if (!rec) {
+    bodyEl.innerHTML = `<div class="empty-board file-missing"><p class="pixel">Not on this device yet.</p><p>This file was added on another device. It downloads automatically the next time Carver syncs.</p></div>`;
+    return;
+  }
+  fileUrl = URL.createObjectURL(rec.blob);
+  view.querySelector('[data-dl]').onclick = () => download(it.fileName || it.title, rec.blob);
+  if (kind === 'image') {
+    bodyEl.innerHTML = `<img class="file-img" src="${fileUrl}" alt="${esc(it.title)}">`;
+  } else if (kind === 'text') {
+    bodyEl.innerHTML = `<pre class="file-text">${esc(await rec.blob.text())}</pre>`;
+  } else if (kind === 'audio') {
+    bodyEl.innerHTML = `<audio controls src="${fileUrl}"></audio>`;
+  } else if (kind === 'pdf') {
+    bodyEl.innerHTML = '<div class="pdf-pages"></div><p class="muted file-loading">Rendering pages…</p>';
+    try {
+      const lib = await pdfjs();
+      const doc = await lib.getDocument({ data: new Uint8Array(await rec.blob.arrayBuffer()) }).promise;
+      const holder = bodyEl.querySelector('.pdf-pages');
+      const width = Math.min(860, bodyEl.clientWidth - 24);
+      for (let i = 1; i <= doc.numPages; i++) {
+        if (selected !== it.id) return;
+        const pg = await doc.getPage(i);
+        const vp1 = pg.getViewport({ scale: 1 });
+        const scale = width / vp1.width;
+        const vp = pg.getViewport({ scale: scale * (devicePixelRatio || 1) });
+        const c = document.createElement('canvas');
+        c.width = vp.width; c.height = vp.height;
+        c.style.width = `${width}px`;
+        holder.appendChild(c);
+        await pg.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+      }
+      bodyEl.querySelector('.file-loading')?.remove();
+      view.querySelector('[data-extract]').onclick = async () => {
+        const out = [];
+        for (let i = 1; i <= doc.numPages; i++) {
+          const tc = await (await doc.getPage(i)).getTextContent();
+          let line = '', lastY = null;
+          const lines = [];
+          for (const t of tc.items) {
+            const y = t.transform[5];
+            if (lastY !== null && Math.abs(y - lastY) > 2) { lines.push(line); line = ''; }
+            line += t.str;
+            if (t.hasEOL) { lines.push(line); line = ''; }
+            lastY = y;
+          }
+          if (line) lines.push(line);
+          out.push(lines.map(l => l.trim()).join('\n'));
+        }
+        const html = out.join('\n\n').split(/\n\s*\n/).map(p => p.replace(/\n/g, ' ').trim()).filter(Boolean).map(p => `<p>${esc(p)}</p>`).join('');
+        const note = store.create({ type: 'note', parentId: it.parentId, title: `${it.title} (text)`, content: html, order: it.order + 0.01 });
+        select(note.id);
+        toast('Text copied into a new note.');
+      };
+    } catch (e) {
+      console.error(e);
+      bodyEl.innerHTML = `<p class="muted">This PDF couldn’t be displayed (${esc(e.message)}). You can still download it.</p>`;
+    }
+  } else {
+    bodyEl.innerHTML = `<div class="empty-board"><p class="pixel">${esc(it.fileName || 'File')}</p><p>Carver can’t show this kind of file, but it’s stored here and syncs with the rest of your binder.</p></div>`;
+  }
+}
+
 // ---------------------------------------------------------------- inspector
 function renderInspector() {
   const it = store.get(selected);
@@ -540,7 +714,8 @@ function renderInspector() {
     <label class="field"><span>Word target</span><input type="number" min="0" step="100" data-f="target" value="${it.target || ''}" placeholder="None"></label>
     ${it.target ? `<div class="target"><div class="px-bar"><span style="width:${pct}%"></span></div><small>${fmt(words)} / ${fmt(it.target)} (${pct}%)</small></div>` : `<small class="muted">${fmt(words)} words</small>`}
     <label class="field"><span>Notes</span><textarea data-f="notes" rows="7" placeholder="Margin notes, ideas, things to fix…">${esc(it.notes)}</textarea></label>
-    ${!isContainer(it) ? `
+    ${inManuscript(it) ? `<label class="check"><input type="checkbox" data-include ${it.exclude ? '' : 'checked'}> Include in compile</label>` : ''}
+    ${it.type === 'doc' || it.type === 'note' ? `
       <div class="field"><span>Snapshots</span>
         <button class="btn ghost small" data-snap>Take snapshot</button>
         <ul class="snaps">${snaps.map((s, i) => `<li><span>${new Date(s.at).toLocaleString()}${s.note ? ` · ${esc(s.note)}` : ''}</span><em>${fmt(store.countWords(s.content))} w</em><button class="btn ghost small" data-restore-snap="${snaps.length - 1 - i}">Restore</button></li>`).join('') || '<li class="muted">Save a copy of this text before a big revision.</li>'}</ul>
@@ -555,6 +730,7 @@ function renderInspector() {
       if (f === 'target' || f === 'status') { renderInspectorSoon(); if (app.classList.contains('mode-board')) renderView(); }
     });
   });
+  inspector.querySelector('[data-include]')?.addEventListener('change', e => store.update(it.id, { exclude: !e.target.checked }));
   inspector.querySelector('[data-snap]')?.addEventListener('click', async () => {
     editor?.flush();
     const note = await ask({ message: 'Name this snapshot (optional):', input: '', ok: 'Save snapshot' });
@@ -611,8 +787,8 @@ function renderStatus() {
 }
 
 // ---------------------------------------------------------------- compile & backup
-function download(name, text, type) {
-  const blob = new Blob([text], { type });
+function download(name, data, type) {
+  const blob = data instanceof Blob ? data : new Blob([data], { type });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
@@ -620,106 +796,16 @@ function download(name, text, type) {
   a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
-const slug = s => (s || 'untitled').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'untitled';
 
-function gatherManuscript(rootId) {
-  const root = store.get(rootId);
-  let start = [root];
-  if (root.type === 'project') {
-    const ms = store.children(root.id).filter(c => c.role === 'manuscript');
-    if (ms.length) start = ms;
-  }
-  const parts = [];
-  const walk = (pid, depth) => {
-    for (const c of store.children(pid)) {
-      if (c.type === 'folder') { parts.push({ kind: 'heading', depth, title: c.title }); walk(c.id, depth + 1); }
-      else if (c.type === 'doc') parts.push({ kind: 'text', html: sanitize(c.content), title: c.title });
-    }
-  };
-  start.forEach(s => (s.type === 'doc' ? parts.push({ kind: 'text', html: sanitize(s.content) }) : walk(s.id, 0)));
-  return parts;
-}
-
-function htmlToMarkdown(html) {
-  const div = document.createElement('div');
-  div.innerHTML = html;
-  const inline = n => [...n.childNodes].map(c => {
-    if (c.nodeType === 3) return c.data.replace(/([*_\\])/g, '\\$1');
-    const t = c.tagName;
-    const inner = inline(c);
-    if (t === 'B' || t === 'STRONG') return inner.trim() ? `**${inner}**` : inner;
-    if (t === 'I' || t === 'EM') return inner.trim() ? `*${inner}*` : inner;
-    if (t === 'BR') return '  \n';
-    return inner;
-  }).join('');
-  const blocks = [];
-  for (const n of div.childNodes) {
-    if (n.nodeType === 3) { if (n.data.trim()) blocks.push(n.data.trim()); continue; }
-    const t = n.tagName;
-    if (/^H\d$/.test(t)) blocks.push('#'.repeat(Math.min(6, +t[1] + 1)) + ' ' + inline(n));
-    else if (t === 'BLOCKQUOTE') blocks.push(inline(n).split('\n').map(l => '> ' + l).join('\n'));
-    else if (t === 'HR') blocks.push('* * *');
-    else if (t === 'UL' || t === 'OL') blocks.push([...n.children].map((li, i) => (t === 'UL' ? '- ' : `${i + 1}. `) + inline(li)).join('\n'));
-    else { const s = inline(n).trim(); if (s) blocks.push(s); }
-  }
-  return blocks.join('\n\n');
-}
-
-function compile(rootId, format) {
+function compileMenu(id) {
   editor?.flush();
-  const root = store.get(rootId);
-  const proj = store.projectOf(rootId) || root;
-  const parts = gatherManuscript(rootId);
-  const words = parts.reduce((n, p) => n + (p.html ? store.countWords(p.html) : 0), 0);
-  const title = proj.title;
-  let out = '';
-  let prevText = false;
-  if (format === 'html') {
-    const body = parts.map(p => {
-      if (p.kind === 'heading') { prevText = false; return `<h${Math.min(3, p.depth + 1)}>${esc(p.title)}</h${Math.min(3, p.depth + 1)}>`; }
-      const sep = prevText ? '<p class="sep">#</p>' : '';
-      prevText = true;
-      return sep + p.html;
-    }).join('\n');
-    out = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
-      body{font-family:'Courier Prime','Courier New',monospace;font-size:12pt;line-height:2;max-width:6.5in;margin:1in auto;color:#111}
-      .title{text-align:center;margin:3in 0}h1{text-align:center;page-break-before:always;margin-top:2in}h2,h3{text-align:center}
-      p{margin:0;text-indent:.5in}h1+p,h2+p,h3+p,.sep+p,hr+p{text-indent:0}.sep{text-align:center;text-indent:0;margin:1em 0}
-      hr{border:0;text-align:center}hr:after{content:'#'}blockquote{margin:1em .5in}
-    </style></head><body><div class="title"><h1 style="page-break-before:avoid;margin:0">${esc(title)}</h1><p style="text-indent:0">about ${fmt(Math.round(words / 100) * 100)} words</p></div>\n${body}</body></html>`;
-    download(`${slug(title)}.html`, out, 'text/html');
-  } else if (format === 'md') {
-    out = `# ${title}\n\n` + parts.map(p => {
-      if (p.kind === 'heading') { prevText = false; return `${'#'.repeat(Math.min(6, p.depth + 2))} ${p.title}`; }
-      const sep = prevText ? '* * *\n\n' : '';
-      prevText = true;
-      return sep + htmlToMarkdown(p.html);
-    }).join('\n\n') + '\n';
-    download(`${slug(title)}.md`, out, 'text/markdown');
-  } else {
-    out = `${title.toUpperCase()}\n\n` + parts.map(p => {
-      if (p.kind === 'heading') { prevText = false; return `\n${p.title.toUpperCase()}\n`; }
-      const sep = prevText ? '                #\n\n' : '';
-      prevText = true;
-      return sep + store.plainText(p.html).replace(/\n{3,}/g, '\n\n').trim();
-    }).join('\n\n') + '\n';
-    download(`${slug(title)}.txt`, out, 'text/plain');
-  }
-  toast(`Compiled ${fmt(words)} words.`);
-}
-
-function compileMenu(id, x, y) {
-  showMenu(x, y, [
-    { label: 'Manuscript (.html, print-ready)', action: () => compile(id, 'html') },
-    { label: 'Markdown (.md)', action: () => compile(id, 'md') },
-    { label: 'Plain text (.txt)', action: () => compile(id, 'txt') },
-  ]);
+  openCompile(id, { toast, download });
 }
 
 function exportBackup() {
   editor?.flush();
-  const data = { app: 'faulkner', version: 1, exportedAt: new Date().toISOString(), items: store.allItems().map(store.serialize) };
-  download(`faulkner-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 1), 'application/json');
+  const data = { app: 'carver', version: 1, exportedAt: new Date().toISOString(), items: store.allItems().map(store.serialize) };
+  download(`carver-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 1), 'application/json');
 }
 function importBackup(file) {
   const r = new FileReader();
@@ -729,7 +815,7 @@ function importBackup(file) {
       const n = store.importItems(data.items || []);
       renderAll();
       toast(`Imported ${n} item${n === 1 ? '' : 's'}.`);
-    } catch (e) { toast('That file could not be read as a Faulkner backup.'); }
+    } catch (e) { toast('That file could not be read as a Carver backup.'); }
   };
   r.readAsText(file);
 }
@@ -751,11 +837,11 @@ function openSettings(section) {
     <div class="dlg-scroll">
     <section id="sec-sync">
       <h3>Sync across devices</h3>
-      ${window.FAULKNER_PREVIEW ? '<p class="preview-note">This is a preview. It can’t reach GitHub, so sync, file downloads and app install only work once Faulkner is published on its own website. Everything you write here is still saved in this browser.</p>' : ''}
-      <p class="muted">Your writing is always saved on this device first. To use it on your phone and other computers, Faulkner keeps a copy in a <b>private GitHub repository</b> that you own. It needs no server and no subscription.</p>
+      ${window.CARVER_PREVIEW ? '<p class="preview-note">This is a preview. It can’t reach GitHub, so sync, file downloads and app install only work once Carver is published on its own website. Everything you write here is still saved in this browser.</p>' : ''}
+      <p class="muted">Your writing is always saved on this device first. To use it on your phone and other computers, Carver keeps a copy in a <b>private GitHub repository</b> that you own. It needs no server and no subscription.</p>
       <details ${cfg.token ? '' : 'open'}><summary>One-time setup (about 3 minutes)</summary>
         <ol class="steps">
-          <li>On GitHub, create a new <b>private</b> repository, e.g. <code>faulkner-vault</code>. Leave it empty.</li>
+          <li>On GitHub, create a new <b>private</b> repository, e.g. <code>carver-vault</code>. Leave it empty.</li>
           <li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained tokens → Generate new token</a>. Under <i>Repository access</i> pick <b>Only select repositories</b> → your vault. Under <i>Permissions → Repository permissions</i> set <b>Contents: Read and write</b>. Pick a long expiration.</li>
           <li>Paste your GitHub username, the repo name, and the token below, then press <b>Connect</b>.</li>
           <li>On each other device, either repeat step 3, or tap <b>Copy setup code</b> here and use <b>Paste setup code</b> there.</li>
@@ -763,7 +849,7 @@ function openSettings(section) {
       </details>
       <div class="field-row">
         <label class="field"><span>GitHub owner</span><input name="owner" value="${esc(cfg.owner || '')}" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="your-username"></label>
-        <label class="field"><span>Repository</span><input name="repo" value="${esc(cfg.repo || '')}" autocapitalize="off" spellcheck="false" placeholder="faulkner-vault"></label>
+        <label class="field"><span>Repository</span><input name="repo" value="${esc(cfg.repo || '')}" autocapitalize="off" spellcheck="false" placeholder="carver-vault"></label>
       </div>
       <label class="field"><span>Access token</span><input name="token" type="password" value="${esc(cfg.token || '')}" autocomplete="off" spellcheck="false" placeholder="github_pat_…"></label>
       <div class="btn-row">
@@ -811,7 +897,7 @@ function openSettings(section) {
         <label class="btn ghost file-btn">Restore from backup<input type="file" accept=".json,application/json" data-s="import" hidden></label>
         ${installPrompt ? '<button class="btn" type="button" data-s="install">Install app</button>' : ''}
       </div>
-      ${isIOS ? '<p class="muted tiny">To install on iPhone or iPad: tap Share → <b>Add to Home Screen</b>.</p>' : '<p class="muted tiny">Install Faulkner from your browser menu (“Install app” or “Add to Home screen”) to open it like a native app.</p>'}
+      ${isIOS ? '<p class="muted tiny">To install on iPhone or iPad: tap Share → <b>Add to Home Screen</b>.</p>' : '<p class="muted tiny">Install Carver from your browser menu (“Install app” or “Add to Home screen”) to open it like a native app.</p>'}
     </section>
     </div>`;
 
@@ -846,17 +932,17 @@ function openSettings(section) {
       if (await ask({ message: 'Stop syncing on this device? Your writing stays here and in the vault.', ok: 'Disconnect', danger: true })) { sync.setConfig(null); openSettings('sync'); }
     } else if (act === 'copy') {
       const code = sync.encodeSetupCode(sync.getConfig());
-      try { await navigator.clipboard.writeText(code); toast('Setup code copied. Paste it into Faulkner on your other device.'); }
+      try { await navigator.clipboard.writeText(code); toast('Setup code copied. Paste it into Carver on your other device.'); }
       catch { await ask({ message: 'Copy this setup code and paste it on your other device:', input: code, ok: 'Done' }); }
     } else if (act === 'paste') {
       let code = '';
       try { code = await navigator.clipboard.readText(); } catch { /* fall through */ }
-      if (!code || !code.startsWith('FAULKNER1:')) code = (await ask({ message: 'Paste your setup code:', input: '', ok: 'Use code' })) || '';
+      if (!code || !/^(CARVER1|FAULKNER1):/.test(code)) code = (await ask({ message: 'Paste your setup code:', input: '', ok: 'Use code' })) || '';
       try {
         const c = sync.decodeSetupCode(code);
         form.owner.value = c.owner; form.repo.value = c.repo; form.token.value = c.token;
         form.querySelector('[data-s="connect"]').click();
-      } catch { toast('That does not look like a Faulkner setup code.'); }
+      } catch { toast('That does not look like a Carver setup code.'); }
     } else if (act === 'export') exportBackup();
     else if (act === 'install' && installPrompt) { installPrompt.prompt(); installPrompt = null; }
   };
@@ -884,6 +970,7 @@ const syncHooks = {
   beforeSync: () => editor?.flush(),
   afterSync: res => {
     if (res.conflicts?.length) toast(`Edited on two devices at once: kept both versions of “${res.conflicts[0]}”.`, 6000);
+    sync.fetchMissingFiles().then(() => { const it = store.get(selected); if (it?.type === 'file' && view.querySelector('.file-missing')) renderView(); });
     if (res.pulled) {
       const it = store.get(selected);
       if (editor && it && !store.isHidden(selected) && (it.type === 'doc' || it.type === 'note')) {
@@ -1018,4 +1105,4 @@ async function boot() {
 boot();
 
 // Exposed for debugging and tests.
-window.faulkner = { store, sync, select, runSync };
+window.carver = { store, sync, select, runSync };
