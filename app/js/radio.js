@@ -8,7 +8,7 @@
 // The music is generated from chord progressions with gentle randomness, so it never
 // repeats exactly but always settles back into the same mood.
 
-let ctx = null, mix, out, send, warm, waves = {}, noiseBuf = null, beds = [];
+let ctx = null, mix, out, send, verb, warm, waves = {}, noiseBuf = null, beds = [];
 let timer = null, nextTime = 0, step = 0, current = null;
 let volume = 0.5;
 const listeners = new Set();
@@ -69,6 +69,25 @@ function setup(given) {
   dlp.connect(mix);
   send._delay = delay;
   send._fb = fb;
+  // Room reverb: a convolver with a synthesized, softly darkening impulse response.
+  const conv = ctx.createConvolver();
+  const irLen = Math.floor(ctx.sampleRate * 2.6);
+  const ir = ctx.createBuffer(2, irLen, ctx.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = ir.getChannelData(c);
+    let lp = 0;
+    for (let i = 0; i < irLen; i++) {
+      const k = i / irLen;
+      const white = Math.random() * 2 - 1;
+      lp += (white - lp) * (0.55 - 0.45 * k); // gets darker as it decays
+      d[i] = lp * Math.pow(1 - k, 2.6) * (i < ctx.sampleRate * 0.012 ? i / (ctx.sampleRate * 0.012) : 1);
+    }
+  }
+  conv.buffer = ir;
+  verb = ctx.createGain();
+  const wet = ctx.createGain();
+  wet.gain.value = 0.55;
+  verb.connect(conv).connect(wet).connect(mix);
   waves.p12 = pulseWave(0.125);
   waves.p25 = pulseWave(0.25);
   waves.p50 = pulseWave(0.5);
@@ -78,7 +97,7 @@ function setup(given) {
   for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
 }
 
-function tone(t, midi, dur, { wave = 'triangle', gain = 0.1, attack = 0.01, release = 0.12, echo = 0, vibrato = 0, cutoff = 0, bend = 0, detune = 0 } = {}) {
+function tone(t, midi, dur, { wave = 'triangle', gain = 0.1, attack = 0.01, release = 0.12, echo = 0, vibrato = 0, cutoff = 0, bend = 0, detune = 0, room = 0 } = {}) {
   const o = ctx.createOscillator();
   if (waves[wave]) o.setPeriodicWave(waves[wave]); else o.type = wave;
   o.frequency.setValueAtTime(midiHz(midi), t);
@@ -116,11 +135,16 @@ function tone(t, midi, dur, { wave = 'triangle', gain = 0.1, attack = 0.01, rele
     s.gain.value = echo;
     g.connect(s).connect(send);
   }
+  if (room) {
+    const s = ctx.createGain();
+    s.gain.value = room;
+    g.connect(s).connect(verb);
+  }
   o.start(t);
   o.stop(t + dur + release + 0.05);
 }
 
-function hiss(t, dur, { type = 'highpass', freq = 7000, q = 0.7, gain = 0.05, attack = 0.002 } = {}) {
+function hiss(t, dur, { type = 'highpass', freq = 7000, q = 0.7, gain = 0.05, attack = 0.002, room = 0 } = {}) {
   const src = ctx.createBufferSource();
   src.buffer = noiseBuf;
   const f = ctx.createBiquadFilter();
@@ -132,6 +156,7 @@ function hiss(t, dur, { type = 'highpass', freq = 7000, q = 0.7, gain = 0.05, at
   g.gain.linearRampToValueAtTime(gain, t + attack);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   src.connect(f).connect(g).connect(mix);
+  if (room) { const s = ctx.createGain(); s.gain.value = room; g.connect(s).connect(verb); }
   src.start(t, Math.random() * 0.5, dur + 0.05);
 }
 
@@ -392,7 +417,9 @@ const RAIN = {
 // ------------------------------------------------------------------ Cedar Waltz
 // F major jazz waltz, 3/4, swung triplet grid. Bass on one, chords on two and three.
 const WALTZ = {
-  bpm: 138, perBeat: 3, perBar: 9, echoTime: 0.33, echoFb: 0.2, level: 1.1, cutoff: 3200,
+  bpm: 138, perBeat: 3, perBar: 9, echoTime: 0.43, echoFb: 0.3, level: 1.1, cutoff: 2700,
+  // An old record in a warm room: surface hiss, a little crackle, and reverb on everything.
+  bed(t) { return [...bed(t, { lp: 6500, hp: 2600, gain: 0.011 }), ...bed(t, { lp: 900, hp: 180, gain: 0.006, swell: 0.07, swellDepth: 0.5 })]; },
   form: [
     { root: 41, tones: [57, 60, 64, 65] }, // Fmaj7
     { root: 38, tones: [57, 60, 62, 65] }, // Dm7
@@ -431,29 +458,34 @@ const WALTZ = {
       if (m !== null) {
         m = near(m, st.bass, 33, 50);
         st.bass = m;
-        tone(t, m, sd * (beat === 0 && !walk ? 5 : 2.6), { wave: 'triangle', gain: 0.24, attack: 0.006, release: 0.08 });
+        tone(t, m, sd * (beat === 0 && !walk ? 5 : 2.6), { wave: 'triangle', gain: 0.24, attack: 0.006, release: 0.08, room: 0.12 });
       }
     }
+    if (pos === 0) crackle(t, sd * this.perBar, 4);
     // brushes and ride
-    if (sub === 0) hiss(t, beat === 0 ? 0.3 : 0.12, { type: 'bandpass', freq: beat === 0 ? 2600 : 5200, q: 0.7, gain: beat === 0 ? 0.03 : 0.02, attack: beat === 0 ? 0.05 : 0.003 });
-    if (sub === 0) hiss(t, 0.22, { freq: 8200, gain: beat === 0 ? 0.03 : 0.018 });
-    if (sub === 2 && beat === 1) hiss(t, 0.1, { freq: 8500, gain: 0.014 });
+    if (sub === 0) hiss(t, beat === 0 ? 0.3 : 0.12, { type: 'bandpass', freq: beat === 0 ? 2600 : 5200, q: 0.7, gain: beat === 0 ? 0.03 : 0.02, attack: beat === 0 ? 0.05 : 0.003, room: 0.35 });
+    if (sub === 0) hiss(t, 0.22, { freq: 8200, gain: beat === 0 ? 0.026 : 0.016, room: 0.3 });
+    if (sub === 2 && beat === 1) hiss(t, 0.1, { freq: 8500, gain: 0.012, room: 0.3 });
     if (pos === 0) thump(t, { gain: 0.05 });
     // comping: oom-pah-pah
     if (sub === 0 && beat > 0 && r() < 0.85) {
-      ch.tones.forEach(m => tone(t, m, sd * 1.6, { wave: 'p25', gain: 0.013, attack: 0.006, release: 0.14, cutoff: 1700 }));
+      ch.tones.forEach(m => tone(t, m, sd * 1.6, { wave: 'p25', gain: 0.013, attack: 0.006, release: 0.2, cutoff: 1500, room: 0.4 }));
     }
     // melody: vibes for eight bars, a breathy flute for the next eight
     if (pos === 0 && bar % 4 === 0) st.phrase = r() < 0.75;
     const flute = Math.floor(bar / 8) % 2 === 1;
-    if (st.phrase && (sub === 0 || (sub === 2 && r() < 0.4)) && r() < 0.5) {
+    st.busy = st.busy || 0;
+    if (st.phrase && (sub === 0 || (sub === 2 && r() < 0.4)) && r() < 0.5 && (!flute || t >= st.busy)) {
       st.line = st.line || 72;
       const pool = r() < 0.6 ? ch.tones.map(m => m + 12) : this.scale;
       const cands = pool.filter(m => Math.abs(m - st.line) <= 5 && m >= 64 && m <= 84);
       const m = cands[Math.floor(r() * cands.length)] || st.line;
       st.line = m;
-      if (flute) tone(t, m, sd * 2.4, { wave: 'triangle', gain: 0.045, attack: 0.05, release: 0.25, vibrato: 4, echo: 0.2 });
-      else tone(t, m, sd * 1.4, { wave: 'sine', gain: 0.05, attack: 0.003, release: 0.7, vibrato: 2.5, echo: 0.2 });
+      if (flute) {
+        const len = sd * (r() < 0.4 ? 5 : 2.6);
+        tone(t, m, len, { wave: 'triangle', gain: 0.045, attack: 0.06, release: 0.25, vibrato: 4, echo: 0.12, room: 0.5 });
+        st.busy = t + len + 0.2;
+      } else tone(t, m, sd * 1.4, { wave: 'sine', gain: 0.05, attack: 0.003, release: 0.9, vibrato: 2.5, echo: 0.18, room: 0.55 });
     }
   },
 };
@@ -503,18 +535,23 @@ const NOIR = {
     if (pos === 9 && r() < 0.35) { hiss(t, 0.03, { type: 'bandpass', freq: 1300, q: 3, gain: 0.05 }); thump(t, { freq: 420, gain: 0.02, dur: 0.04 }); }
     // piano: dark, low, sustained voicings
     if (pos === 0 || (pos === 8 && r() < 0.35)) {
-      ch.tones.forEach((m, i) => tone(t + i * 0.012, m - (i === 0 ? 12 : 0), sd * 8, { wave: 'sine', gain: 0.03, attack: 0.004, release: 1.4 }));
+      ch.tones.forEach((m, i) => tone(t + i * 0.012, m - (i === 0 ? 12 : 0), sd * 8, { wave: 'sine', gain: 0.03, attack: 0.004, release: 1.4, room: 0.25 }));
     }
-    // muted trumpet
-    if (pos === 0 && bar % 2 === 0) st.phrase = r() < 0.6;
-    if (st.phrase && (sub === 0 || sub === 2) && r() < 0.3) {
+    // muted trumpet: one voice. Each note finishes (plus a breath) before the next begins.
+    if (pos === 0 && bar % 2 === 0) st.phrase = r() < 0.65;
+    st.busy = st.busy || 0;
+    const onBeat = sub === 0 || (sub === 2 && r() < 0.25);
+    if (st.phrase && onBeat && t >= st.busy && r() < 0.6) {
       st.line = st.line || 67;
-      const pool = r() < 0.55 ? ch.tones.map(m => m + 12) : this.blues;
+      const pool = r() < 0.6 ? ch.tones.map(m => m + 12) : this.blues;
       const cands = pool.filter(m => Math.abs(m - st.line) <= 5 && m >= 58 && m <= 77);
       const m = cands[Math.floor(r() * cands.length)] || st.line;
       st.line = m;
-      const long = r() < 0.35;
-      tone(t, m, sd * (long ? 5 : 1.8), { wave: 'sawtooth', gain: 0.045, attack: 0.07, release: 0.35, vibrato: long ? 5 : 2, cutoff: 1250, echo: 0.3, bend: long && r() < 0.5 ? -3 : 0 });
+      const beats = [2, 2, 3, 3, 4, 6][Math.floor(r() * 6)];
+      const len = beats * sd * 3 * 0.9;
+      const fall = beats >= 4 && r() < 0.35;
+      tone(t, m, len, { wave: 'sawtooth', gain: 0.042, attack: 0.09, release: 0.28, vibrato: beats >= 3 ? 4.5 : 2, cutoff: 1250, echo: 0.06, room: 0.45, bend: fall ? -3 : 0 });
+      st.busy = t + len + 0.28 + sd * 3 * (r() < 0.35 ? 2 : 0.6);
     }
   },
 };
