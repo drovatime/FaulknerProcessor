@@ -11,6 +11,7 @@ import * as files from './files.js';
 import { pdfjs } from './vendor.js';
 
 // ---------------------------------------------------------------- settings
+const APP_VERSION = '2026.11.17-b';
 const SETTINGS_KEY = 'faulkner.settings';
 const DEFAULTS = {
   theme: 'auto', font: 'courier', fontSize: 19, width: 680,
@@ -899,6 +900,7 @@ function openSettings(section) {
         ${installPrompt ? '<button class="btn" type="button" data-s="install">Install app</button>' : ''}
       </div>
       ${isIOS ? '<p class="muted tiny">To install on iPhone or iPad: tap Share → <b>Add to Home Screen</b>.</p>' : '<p class="muted tiny">Install Carver from your browser menu (“Install app” or “Add to Home screen”) to open it like a native app.</p>'}
+      <p class="muted tiny">Version ${APP_VERSION}</p>
     </section>
     </div>`;
 

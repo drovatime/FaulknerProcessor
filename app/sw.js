@@ -1,5 +1,5 @@
 // Offline support: the app shell is cached so Carver opens without a connection.
-const VERSION = 'carver-v3';
+const VERSION = 'carver-v4';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/main.js', 'js/store.js', 'js/db.js', 'js/sync.js', 'js/editor.js', 'js/scene.js', 'js/sound.js', 'js/icons.js',
@@ -18,8 +18,9 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.hostname === 'api.github.com') return;
   if (url.origin === location.origin) {
-    // Network first (so updates arrive), falling back to cache when offline.
-    e.respondWith(fetch(e.request).then(res => {
+    // Network first, always checking with the server (so updates arrive immediately),
+    // falling back to the cached copy when offline.
+    e.respondWith(fetch(e.request, { cache: 'no-cache' }).then(res => {
       if (res.ok) { const copy = res.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); }
       return res;
     }).catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match('index.html'))));

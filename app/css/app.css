@@ -126,6 +126,8 @@ code { font-family: 'Courier Prime', monospace; background: var(--panel-2); padd
   color: var(--chrome-ink);
   border-bottom: 2px solid #0006;
   min-width: 0;
+  position: relative;
+  z-index: 5;
 }
 .brand { font-size: 24px; letter-spacing: .18em; margin: 0 8px 0 4px; color: var(--chrome-ink); }
 #crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--chrome-muted); font-size: 13px; }
