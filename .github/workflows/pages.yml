@@ -2,7 +2,7 @@ name: Deploy Faulkner to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/wizardly-turing-lg7lzt]
   workflow_dispatch:
 
 permissions:
