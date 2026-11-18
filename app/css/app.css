@@ -289,12 +289,6 @@ input[type=range] { accent-color: var(--accent); }
   background: repeating-linear-gradient(90deg, transparent 0 6px, #0000000d 6px 8px);
 }
 .sheet-tail { height: 45vh; }
-.doc-title {
-  width: 100%; border: 0; background: none; outline: none;
-  font-family: var(--editor-font); font-size: calc(var(--editor-size) * 1.35); font-weight: 700;
-  color: var(--ink); padding: 0 0 18px; margin-bottom: 18px;
-  border-bottom: 2px dashed var(--line);
-}
 .page {
   outline: none; min-height: 50vh;
   font-family: var(--editor-font, 'Courier Prime', monospace);

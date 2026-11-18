@@ -135,7 +135,7 @@ await A.screenshot({ path: `${OUT}/4-outline.png` });
 // ---- Sync
 await connect(A);
 check(remoteItems().length === 10, `pushed project to vault (${remoteItems().length} items)`);
-const scene = remoteItems().find(i => i.title === 'Opening Scene');
+const scene = remoteItems().find(i => i.title === 'New Scene');
 check(scene && scene.content.includes('bell buoy'), 'scene text is in the vault');
 
 const B = await device('phone', { ...devices['iPhone 13'] });
@@ -167,7 +167,7 @@ await syncNow(B);
 await syncNow(A);
 const titles = remoteItems().map(i => i.title);
 check(titles.some(t => t.includes('conflict copy')), 'conflict produced a kept copy');
-const bodies = remoteItems().filter(i => i.title.startsWith('Opening Scene')).map(i => i.content).join('|');
+const bodies = remoteItems().filter(i => i.title.startsWith('New Scene')).map(i => i.content).join('|');
 check(bodies.includes('Desktop version') && bodies.includes('Phone version'), 'both versions preserved');
 
 // ---- Delete propagates
@@ -318,7 +318,7 @@ await B.screenshot({ path: `${OUT}/16-phone-compile-options.png` });
 
 // ---- Auto-indent survives mobile-style markup (bare text / <div> lines)
 await A.click('#compile [data-c=close]');
-await A.evaluate(() => { const d = window.carver.store.allItems().find(i => i.title === 'Opening Scene'); window.carver.select(d.id); });
+await A.evaluate(() => { const d = window.carver.store.allItems().find(i => i.title === 'New Scene'); window.carver.select(d.id); });
 await A.waitForSelector('#page');
 await A.evaluate(() => {
   const page = document.querySelector('#page');
@@ -382,6 +382,14 @@ await A.click('.menu button:has-text("Add section")');
 await A.click('.menu button:has-text("Outline")');
 const salt2 = await A.evaluate(id => { const s = window.carver.store; const o = s.children(id).find(c => c.role === 'outline'); return { kids: s.children(id).map(c => c.title), premise: !!o && s.children(o.id).some(n => n.title === 'Premise') }; }, salt.id);
 check(JSON.stringify(salt2.kids) === '["Manuscript","Outline","Characters"]' && salt2.premise, `section added later in the right place (${salt2.kids.join(', ')})`);
+
+// ---- No title on the writing page; rename from the inspector
+await A.evaluate(() => { const d = window.carver.store.allItems().find(i => i.title === 'New Scene'); window.carver.select(d.id); });
+await A.waitForSelector('#page');
+check(await A.locator('.doc-title').count() === 0, 'writing page has no title header');
+await A.fill('#inspector [data-f=title]', 'The Dock at Dawn');
+await A.waitForTimeout(500);
+check(await A.locator('#tree .row.sel .title').textContent() === 'The Dock at Dawn', 'renaming from the inspector updates the binder');
 
 check(errors.length === 0, 'no page errors' + (errors.length ? ':\n  ' + errors.join('\n  ') : ''));
 console.log(`GitHub API calls: ${gh.calls}`);

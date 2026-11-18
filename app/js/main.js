@@ -12,7 +12,7 @@ import * as files from './files.js';
 import { pdfjs } from './vendor.js';
 
 // ---------------------------------------------------------------- settings
-const APP_VERSION = '2026.11.18-a';
+const APP_VERSION = '2026.11.18-b';
 const SETTINGS_KEY = 'faulkner.settings';
 const DEFAULTS = {
   theme: 'auto', font: 'courier', fontSize: 19, width: 680,
@@ -136,7 +136,7 @@ function createProject({ title, sections, starter, premise }) {
   let first = null;
   if (starter) {
     const ch = store.create({ type: 'folder', parentId: ms.id, title: 'Chapter One' });
-    first = store.create({ type: 'doc', parentId: ch.id, title: 'Opening Scene', synopsis: 'Where it all begins.' });
+    first = store.create({ type: 'doc', parentId: ch.id, title: 'New Scene' });
     expanded.add(ch.id);
   }
   saveExpanded();
@@ -207,7 +207,7 @@ function newChild(parentId, type) {
   const it = store.create({ type, parentId, title: titles[type], content });
   if (parentId) { expanded.add(parentId); saveExpanded(); }
   select(it.id);
-  if (type !== 'folder') setTimeout(() => $('.doc-title')?.select(), 50);
+  if (type !== 'folder' && !matchMedia('(pointer: coarse)').matches) setTimeout(() => $('#page')?.focus(), 50);
   return it;
 }
 
@@ -487,7 +487,6 @@ function renderWelcome() {
 function renderEditor(it) {
   app.classList.add('mode-editor');
   view.innerHTML = `<div class="scroller"><div class="sheet ${it.type === 'note' ? 'is-note' : ''}">
-    <input class="doc-title" value="${esc(it.title)}" aria-label="Title" spellcheck="true">
     <div class="page" id="page" role="textbox" aria-multiline="true" aria-label="${esc(it.title)}"></div>
   </div><div class="sheet-tail"></div></div>`;
   const page = $('#page');
@@ -499,13 +498,6 @@ function renderEditor(it) {
     },
     onWords: delta => { addToday(delta); renderStatus(); if (!inspector.contains(document.activeElement)) renderInspectorSoon(); },
   });
-  const title = view.querySelector('.doc-title');
-  let tt;
-  title.addEventListener('input', () => {
-    clearTimeout(tt);
-    tt = setTimeout(() => { store.update(it.id, { title: title.value || 'Untitled' }); renderBinder(); renderCrumbs(); }, 300);
-  });
-  title.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); page.focus(); } });
   if (!it.content && !matchMedia('(pointer: coarse)').matches) setTimeout(() => page.focus(), 30);
 }
 
@@ -794,6 +786,7 @@ function renderInspector() {
   const snaps = (it.snapshots || []).slice().reverse();
   inspector.innerHTML = `
     <div class="insp-head"><span class="pixel">Inspector</span><button class="icon-btn close-insp" aria-label="Close">${icon('close')}</button></div>
+    <label class="field"><span>Title</span><input data-f="title" value="${esc(it.title)}" placeholder="Untitled" spellcheck="true"></label>
     <label class="field"><span>Synopsis</span><textarea data-f="synopsis" rows="5" placeholder="What happens here, in a sentence or two.">${esc(it.synopsis)}</textarea></label>
     <div class="field-row">
       <label class="field"><span>Status</span><select data-f="status">${STATUSES.map(s => `<option value="${esc(s)}" ${s === it.status ? 'selected' : ''}>${s || '—'}</option>`).join('')}</select></label>
@@ -813,6 +806,16 @@ function renderInspector() {
   inspector.querySelectorAll('[data-f]').forEach(el => {
     const f = el.dataset.f;
     el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => {
+      if (f === 'title') {
+        clearTimeout(el._t);
+        el._t = setTimeout(() => {
+          store.update(it.id, { title: el.value.trim() || 'Untitled' });
+          renderBinder(); renderCrumbs(); renderStatus();
+          const bt = view.querySelector('.board-title');
+          if (bt && selected === it.id) bt.value = el.value.trim() || 'Untitled';
+        }, 300);
+        return;
+      }
       store.update(it.id, { [f]: f === 'target' ? (+el.value || 0) : el.value }, { quiet: f !== 'label' });
       if (f === 'label') renderBinder();
       if (f === 'target' || f === 'status') { renderInspectorSoon(); if (app.classList.contains('mode-board')) renderView(); }
@@ -1066,9 +1069,8 @@ const syncHooks = {
       const it = store.get(selected);
       if (editor && it && !store.isHidden(selected) && (it.type === 'doc' || it.type === 'note')) {
         editor.reload(it);
-        const t = view.querySelector('.doc-title');
-        if (t && document.activeElement !== t) t.value = it.title;
-        renderBinder(); renderCrumbs(); renderInspector(); renderStatus();
+        renderBinder(); renderCrumbs(); renderStatus();
+        if (!inspector.contains(document.activeElement)) renderInspector();
       } else if (!app.classList.contains('mode-board') || !view.contains(document.activeElement)) {
         if (editor) { editor.destroy(); editor = null; }
         renderAll();
