@@ -12,7 +12,7 @@ import * as files from './files.js';
 import { pdfjs } from './vendor.js';
 
 // ---------------------------------------------------------------- settings
-const APP_VERSION = '2026.11.17-f';
+const APP_VERSION = '2026.11.18-a';
 const SETTINGS_KEY = 'faulkner.settings';
 const DEFAULTS = {
   theme: 'auto', font: 'courier', fontSize: 19, width: 680,
@@ -86,7 +86,10 @@ function ask({ message, input = null, ok = 'OK', cancel = 'Cancel', danger = fal
       resolve(input !== null ? (yes ? field.value : null) : yes);
     });
     dlg.showModal();
-    if (field) { field.focus(); field.select(); }
+    if (field) {
+      field.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); dlg.close('ok'); } });
+      field.focus(); field.select();
+    }
   });
 }
 
@@ -106,19 +109,92 @@ function iconFor(it) {
   return 'doc';
 }
 
-function newProject() {
-  const p = store.create({ type: 'project', title: 'Untitled Project' });
-  const roles = ['manuscript', 'outline', 'characters', 'places', 'notes', 'research'];
-  const f = {};
-  roles.forEach((role, i) => { f[role] = store.create({ type: 'folder', parentId: p.id, title: ROLE_INFO[role].title, role, order: i + 1 }); });
-  const ch = store.create({ type: 'folder', parentId: f.manuscript.id, title: 'Chapter One' });
-  const scene1 = store.create({ type: 'doc', parentId: ch.id, title: 'Opening Scene', synopsis: 'Where it all begins.' });
-  store.create({ type: 'note', parentId: f.outline.id, title: 'Premise', content: TEMPLATES.premise });
-  [p.id, f.manuscript.id, ch.id].forEach(id => expanded.add(id));
+// Project sections, in binder order. Manuscript is always included.
+const SECTIONS = ['manuscript', 'outline', 'characters', 'places', 'notes', 'research'];
+const SECTION_HINTS = {
+  outline: 'Beats, plot points and a premise worksheet',
+  characters: 'One note per character, from a fill-in template',
+  places: 'Settings and locations, from a template',
+  notes: 'Anything else: ideas, scraps, lines you love',
+  research: 'Sources, PDFs and images you upload',
+};
+
+function addSection(projectId, role, { premise = true } = {}) {
+  const existing = store.children(projectId).find(c => c.role === role);
+  if (existing) return existing;
+  const f = store.create({ type: 'folder', parentId: projectId, title: ROLE_INFO[role].title, role, order: SECTIONS.indexOf(role) + 1 });
+  if (role === 'outline' && premise) store.create({ type: 'note', parentId: f.id, title: 'Premise', content: TEMPLATES.premise });
+  return f;
+}
+
+function createProject({ title, sections, starter, premise }) {
+  const p = store.create({ type: 'project', title: title || 'Untitled Project' });
+  const ms = addSection(p.id, 'manuscript');
+  for (const role of SECTIONS.slice(1)) if (sections.includes(role)) addSection(p.id, role, { premise });
+  expanded.add(p.id);
+  expanded.add(ms.id);
+  let first = null;
+  if (starter) {
+    const ch = store.create({ type: 'folder', parentId: ms.id, title: 'Chapter One' });
+    first = store.create({ type: 'doc', parentId: ch.id, title: 'Opening Scene', synopsis: 'Where it all begins.' });
+    expanded.add(ch.id);
+  }
   saveExpanded();
-  select(scene1.id);
-  toast('New project ready. Rename it in the binder or inspector.');
+  select(first ? first.id : ms.id);
+  toast(`“${p.title}” is ready. You can rename it any time.`);
   return p;
+}
+
+function newProject() {
+  const remembered = safeJSON(localStorage.getItem('faulkner.newproject'));
+  const chosen = remembered.sections || SECTIONS.slice(1);
+  const starter = remembered.starter ?? true;
+  const premise = remembered.premise ?? true;
+  const dlg = document.createElement('dialog');
+  dlg.className = 'ask newproj';
+  dlg.innerHTML = `<form method="dialog" class="ask-body">
+    <h2 class="pixel">New project</h2>
+    <label class="field"><span>Working title</span><input id="np-title" placeholder="Untitled Project" autocomplete="off"></label>
+    <p class="muted tiny">You can change the title any time from the binder, the inspector or the folder view.</p>
+    <div class="field"><span>Sections</span>
+      <label class="check"><input type="checkbox" checked disabled> <span><b>Manuscript</b> <em class="muted">The book itself: chapters and scenes</em></span></label>
+      ${SECTIONS.slice(1).map(r => `<label class="check"><input type="checkbox" name="sec" value="${r}" ${chosen.includes(r) ? 'checked' : ''}> <span><b>${ROLE_INFO[r].title}</b> <em class="muted">${SECTION_HINTS[r]}</em></span></label>`).join('')}
+    </div>
+    <div class="field"><span>Get started with</span>
+      <label class="check"><input type="checkbox" name="starter" ${starter ? 'checked' : ''}> <span>Chapter One and an opening scene</span></label>
+      <label class="check np-premise"><input type="checkbox" name="premise" ${premise ? 'checked' : ''}> <span>A premise worksheet in the Outline</span></label>
+    </div>
+    <p class="muted tiny">Every folder can be shown as a corkboard of index cards or as an outline. Missing a section later? Add it from the project’s ⋯ menu.</p>
+    <div class="btn-row"><span class="spacer"></span>
+      <button class="btn ghost" value="cancel">Cancel</button>
+      <button class="btn" value="ok">Create project</button></div></form>`;
+  document.body.appendChild(dlg);
+  const form = dlg.querySelector('form');
+  const title = dlg.querySelector('#np-title');
+  const syncPremise = () => {
+    const on = form.querySelector('input[name=sec][value=outline]').checked;
+    dlg.querySelector('.np-premise').classList.toggle('off', !on);
+    form.premise.disabled = !on;
+  };
+  form.addEventListener('change', syncPremise);
+  syncPremise();
+  title.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); dlg.close('ok'); } });
+  dlg.addEventListener('close', () => {
+    const ok = dlg.returnValue === 'ok';
+    const opts = {
+      title: title.value.trim(),
+      sections: [...form.querySelectorAll('input[name=sec]:checked')].map(i => i.value),
+      starter: form.starter.checked,
+      premise: form.premise.checked,
+    };
+    dlg.remove();
+    if (!ok) return;
+    localStorage.setItem('faulkner.newproject', JSON.stringify({ sections: opts.sections, starter: opts.starter, premise: opts.premise }));
+    createProject(opts);
+    if (narrow()) closeDrawers();
+  });
+  dlg.showModal();
+  title.focus();
 }
 
 function newChild(parentId, type) {
@@ -317,6 +393,16 @@ function itemMenu(id, x, y) {
   entries.push({ label: 'Duplicate', action: () => { const c = store.duplicate(id); if (c) select(c.id); } });
   if (it.type === 'doc' || it.type === 'note') {
     entries.push({ label: it.type === 'doc' ? 'Convert to note' : 'Convert to manuscript doc', action: () => { store.update(id, { type: it.type === 'doc' ? 'note' : 'doc' }); renderAll(); } });
+  }
+  if (it.type === 'project') {
+    const missing = SECTIONS.filter(r => !store.children(id).some(c => c.role === r));
+    if (missing.length) {
+      entries.push('-');
+      entries.push({ label: 'Add section…', icon: 'plus', action: () => showMenu(x, y, missing.map(r => ({
+        label: ROLE_INFO[r].title, icon: ROLE_INFO[r].icon,
+        action: () => { const f = addSection(id, r); expanded.add(id); saveExpanded(); select(f.id); toast(`Added ${ROLE_INFO[r].title}.`); },
+      }))) });
+    }
   }
   if (container) {
     entries.push('-');
@@ -1103,7 +1189,7 @@ $('#btn-radio').onclick = () => {
   });
   setTimeout(() => document.addEventListener('pointerdown', radioOutside, true), 0);
 };
-$('#btn-new-project').onclick = () => { newProject(); if (narrow()) closeDrawers(); };
+$('#btn-new-project').onclick = () => newProject();
 $('#btn-trash').onclick = () => { select('trash'); if (narrow()) closeDrawers(); };
 $('#search').addEventListener('input', e => { searchTerm = e.target.value.trim(); renderBinder(); });
 

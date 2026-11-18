@@ -110,6 +110,9 @@ await A.evaluate(() => localStorage.setItem('faulkner.settings', JSON.stringify(
 await A.reload(); await A.waitForSelector('.welcome');
 await A.screenshot({ path: `${OUT}/1-welcome.png` });
 await A.click('[data-w=new]');
+await A.waitForSelector('dialog.newproj');
+await A.screenshot({ path: `${OUT}/1b-new-project.png` });
+await A.click('dialog.newproj button[value=ok]');
 await A.waitForSelector('#page');
 await A.click('#page');
 await A.keyboard.type('The fog came in off the water before the boats did. "Not yet," she said -- and waited...');
@@ -358,6 +361,27 @@ for (const st of ['tide', 'rain', 'waltz', 'noir']) {
 await A.click('.radio-panel [data-st=off]');
 check(await A.evaluate(() => window.carver.radio.playing()) === null, 'radio turns off');
 await A.mouse.click(5, 600);
+
+// ---- New project dialog: working title, chosen sections, add one later
+await A.click('#btn-new-project');
+await A.waitForSelector('dialog.newproj');
+await A.fill('#np-title', 'Salt Road');
+for (const r of ['outline', 'places', 'notes', 'research']) await A.uncheck(`dialog.newproj input[value=${r}]`);
+await A.uncheck('dialog.newproj input[name=starter]');
+await A.press('#np-title', 'Enter');
+await A.waitForFunction(() => window.carver.store.allItems().some(i => i.title === 'Salt Road'));
+const salt = await A.evaluate(() => {
+  const s = window.carver.store;
+  const p = s.allItems().find(i => i.title === 'Salt Road');
+  return { id: p.id, kids: s.children(p.id).map(c => c.title), msKids: s.children(s.children(p.id)[0].id).length };
+});
+check(JSON.stringify(salt.kids) === '["Manuscript","Characters"]' && salt.msKids === 0, `new project uses chosen sections (${salt.kids.join(', ')})`);
+const row = A.locator(`.row[data-id="${salt.id}"] .more`);
+await row.click({ force: true });
+await A.click('.menu button:has-text("Add section")');
+await A.click('.menu button:has-text("Outline")');
+const salt2 = await A.evaluate(id => { const s = window.carver.store; const o = s.children(id).find(c => c.role === 'outline'); return { kids: s.children(id).map(c => c.title), premise: !!o && s.children(o.id).some(n => n.title === 'Premise') }; }, salt.id);
+check(JSON.stringify(salt2.kids) === '["Manuscript","Outline","Characters"]' && salt2.premise, `section added later in the right place (${salt2.kids.join(', ')})`);
 
 check(errors.length === 0, 'no page errors' + (errors.length ? ':\n  ' + errors.join('\n  ') : ''));
 console.log(`GitHub API calls: ${gh.calls}`);

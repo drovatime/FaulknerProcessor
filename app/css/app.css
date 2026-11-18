@@ -668,3 +668,20 @@ dialog summary { cursor: pointer; font-weight: 600; }
 .radio-panel label { display: flex; align-items: center; gap: 8px; padding: 8px 10px 4px; font-size: 13px; color: var(--muted); }
 .radio-panel input[type=range] { flex: 1; accent-color: var(--accent); }
 .radio-panel .rp-note { padding: 2px 10px 6px; font-size: 11px; color: var(--muted); }
+
+/* New project dialog */
+dialog.newproj { width: min(480px, calc(100vw - 24px)); }
+.newproj h2 { margin: 0 0 4px; font-size: 28px; font-weight: normal; color: var(--accent); }
+.newproj .check { align-items: flex-start; margin: 7px 0; }
+.newproj .check input { margin-top: 2px; flex: none; width: 16px; height: 16px; padding: 0; border: 0; }
+.newproj .check b { font-weight: 600; }
+.newproj .check em { font-style: normal; font-size: 12px; display: block; }
+.newproj .np-premise.off { opacity: .45; }
+.newproj .muted.tiny { margin: 4px 0 8px; }
+dialog.newproj { overflow: hidden; }
+dialog.newproj .ask-body { max-height: min(86dvh, 900px); overflow-y: auto; padding-bottom: 0; }
+.newproj .btn-row { position: sticky; bottom: 0; margin: 0 -20px; padding: 10px 20px calc(12px + var(--safe-bottom)); background: var(--paper); border-top: 2px dashed var(--line); }
+@media (max-width: 760px) {
+  .newproj .check { margin: 5px 0; }
+  .newproj .check em { font-size: 11px; }
+}
